@@ -337,6 +337,11 @@ AC_ARG_ENABLE(openal,
 		[enable OpenAL support (default: disable)]),,
 	enable_openal=no)
 
+AC_ARG_ENABLE(rpi,
+	AS_HELP_STRING([--enable-rpi],
+		[enable RPi support (default: disable)]),,
+	enable_rpi=no)
+
 AC_ARG_ENABLE(opus,
 	AS_HELP_STRING([--enable-opus],
 		[enable Opus codec support (default: auto)]),,
@@ -1389,6 +1394,28 @@ fi
 
 AM_CONDITIONAL(HAVE_OPENAL, test x$enable_openal = xyes)
 
+dnl ---------------------------------- RPi ---------------------------------
+AC_SUBST(RPI_CFLAGS,"")
+AC_SUBST(RPI_LIBS,"")
+
+if test x$enable_rpi = xyes; then
+	#if test x$enable_osx = xyes; then
+		AC_CHECK_HEADERS([bcm_host.h IL/OMX_Types.h IL/OMX_Core.h IL/OMX_Broadcom.h], [], [enable_rpi=no])
+		if test x$enable_rpi = xyes; then
+			RPI_LIBS="-lopenmaxil -lbcm_host"
+			AC_DEFINE(HAVE_RPI, 1, [Define for RPi support])
+		else
+			AC_MSG_WARN(RPi headers not found -- disabling RPi support)
+		fi
+	#else
+		#PKG_CHECK_MODULES([RPI], [rpi],
+			#AC_DEFINE(HAVE_RPI, 1, [Define for RPi support]),
+			#enable_rpi=no)
+	#fi
+fi
+
+AM_CONDITIONAL(HAVE_RPI, test x$enable_rpi = xyes)
+
 dnl ---------------------------- Open Sound System ----------------------------
 if test x$enable_oss = xyes; then
 	AC_CHECK_HEADER(sys/soundcard.h,
@@ -1508,6 +1535,7 @@ if
 	test x$enable_jack = xno &&
 	test x$enable_mvp = xno; then
 	test x$enable_openal = xno &&
+	test x$enable_rpi = xno &&
 	test x$enable_oss = xno &&
 	test x$enable_osx = xno &&
 	test x$enable_pipe_output = xno &&
@@ -1667,6 +1695,7 @@ results(ao,[libao])
 results(mvp, [Media MVP])
 results(oss,[OSS])
 results(openal,[OpenAL])
+results(rpi,[RPi])
 results(osx, [OS X])
 results(pipe_output, [Pipeline])
 printf '\n\t'

@@ -760,6 +760,7 @@ liboutput_plugins_a_CPPFLAGS = $(AM_CPPFLAGS) \
 	$(FFADO_CFLAGS) \
 	$(JACK_CFLAGS) \
 	$(OPENAL_CFLAGS) \
+	$(RPI_CFLAGS) \
 	$(OPENSSL_CFLAGS) \
 	$(PULSE_CFLAGS) \
 	$(SHOUT_CFLAGS)
@@ -773,6 +774,7 @@ OUTPUT_LIBS = \
 	$(FFADO_LIBS) \
 	$(JACK_LIBS) \
 	$(OPENAL_LIBS) \
+	$(RPI_LIBS) \
 	$(PULSE_LIBS) \
 	$(SHOUT_LIBS)
 
@@ -863,6 +865,11 @@ endif
 if HAVE_OPENAL
 liboutput_plugins_a_SOURCES += \
 	src/output/openal_output_plugin.c src/output/openal_output_plugin.h
+endif
+
+if HAVE_RPI
+liboutput_plugins_a_SOURCES += \
+	src/output/rpi_output_plugin.c src/output/rpi_output_plugin.h
 endif
 
 if HAVE_OSX

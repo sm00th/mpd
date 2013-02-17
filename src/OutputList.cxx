@@ -29,6 +29,7 @@
 #include "output/mvp_output_plugin.h"
 #include "output/NullOutputPlugin.hxx"
 #include "output/openal_output_plugin.h"
+#include "output/rpi_output_plugin.h"
 #include "output/OssOutputPlugin.hxx"
 #include "output/OSXOutputPlugin.hxx"
 #include "output/pipe_output_plugin.h"
@@ -64,6 +65,9 @@ const struct audio_output_plugin *const audio_output_plugins[] = {
 #endif
 #ifdef HAVE_OPENAL
 	&openal_output_plugin,
+#endif
+#ifdef HAVE_RPI
+	&rpi_output_plugin,
 #endif
 #ifdef HAVE_OSX
 	&osx_output_plugin,
