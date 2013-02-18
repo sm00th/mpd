@@ -158,9 +158,6 @@ rpi_init(const struct config_param *param, GError **error_r)
 		strncpy(device_name, "local", 6);
 	}
 
-	bcm_host_init();
-	OMX_Init();
-
 	od = g_new(struct rpi_data, 1);
 	od->device_name = device_name;
 	od->input_buffer_list = g_list_alloc();
@@ -181,9 +178,6 @@ static void
 rpi_finish(struct audio_output *ao)
 {
 	struct rpi_data *od = (struct rpi_data *)ao;
-
-	OMX_Deinit();
-	bcm_host_deinit();
 
 	ao_base_finish(&od->base);
 
@@ -225,6 +219,9 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	m_callbacks.EventHandler = rpi_event_handler_callback;
 	m_callbacks.EmptyBufferDone = rpi_empty_buffer_done_callback;
 	m_callbacks.FillBufferDone = rpi_fill_buffer_done_callback;
+
+	bcm_host_init();
+	OMX_Init();
 
 	if (!m_get_handle(&od->m_render, (OMX_STRING)OMX_RENDER, od, &m_callbacks)) {
 		return false;
@@ -335,6 +332,10 @@ rpi_close(struct audio_output *ao)
 	g_mutex_unlock(&od->buffer_lock);
 
 	m_send_cmd(od->m_render, OMX_CommandStateSet, OMX_StateLoaded);
+	OMX_FreeHandle(od->m_render);
+
+	OMX_Deinit();
+	bcm_host_deinit();
 }
 
 static unsigned
