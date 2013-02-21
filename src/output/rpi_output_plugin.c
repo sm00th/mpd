@@ -55,12 +55,15 @@ struct rpi_data {
 	uint8_t        num_buffers_avail;
 };
 
-static OMX_ERRORTYPE rpi_event_handler_callback(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_EVENTTYPE eEvent, OMX_U32 nData1, OMX_U32 nData2, OMX_PTR pEventData)
+static OMX_ERRORTYPE rpi_event_handler_callback(OMX_HANDLETYPE hComponent,
+		OMX_PTR pAppData, OMX_EVENTTYPE eEvent, OMX_U32 nData1, OMX_U32 nData2,
+		OMX_PTR pEventData)
 {
 	return 0;
 }
 
-static OMX_ERRORTYPE rpi_empty_buffer_done_callback(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
+static OMX_ERRORTYPE rpi_empty_buffer_done_callback(OMX_HANDLETYPE hComponent,
+		OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
 {
 	struct rpi_data *od = (struct rpi_data *)pAppData;
 	g_mutex_lock(&od->buffer_lock);
@@ -70,12 +73,14 @@ static OMX_ERRORTYPE rpi_empty_buffer_done_callback(OMX_HANDLETYPE hComponent, O
 	return 0;
 }
 
-static OMX_ERRORTYPE rpi_fill_buffer_done_callback(OMX_HANDLETYPE hComponent, OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
+static OMX_ERRORTYPE rpi_fill_buffer_done_callback(OMX_HANDLETYPE hComponent,
+		OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
 {
 	return 0;
 }
 
-static bool m_get_handle(OMX_HANDLETYPE *handle, OMX_STRING name, OMX_PTR prData, OMX_CALLBACKTYPE *callbacks)
+static bool m_get_handle(OMX_HANDLETYPE *handle, OMX_STRING name,
+		OMX_PTR prData, OMX_CALLBACKTYPE *callbacks)
 {
 	OMX_ERRORTYPE omx_err;
 
@@ -87,31 +92,36 @@ static bool m_get_handle(OMX_HANDLETYPE *handle, OMX_STRING name, OMX_PTR prData
 	return true;
 }
 
-static bool m_get_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx, OMX_PTR param)
+static bool m_get_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+		OMX_PTR param)
 {
 	OMX_ERRORTYPE omx_err;
 
 	omx_err = OMX_GetParameter(handle, idx, param);
 	if (omx_err != OMX_ErrorNone) {
-		g_warning("could not get parameter 0x%08x omx_err(0x%08x)\n", idx, omx_err);
+		g_warning("could not get parameter 0x%08x omx_err(0x%08x)\n", idx,
+				omx_err);
 		return false;
 	}
 	return true;
 }
 
-static bool m_set_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx, OMX_PTR param)
+static bool m_set_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+		OMX_PTR param)
 {
 	OMX_ERRORTYPE omx_err;
 
 	omx_err = OMX_SetParameter(handle, idx, param);
 	if (omx_err != OMX_ErrorNone) {
-		g_warning("could not set parameter 0x%08x omx_err(0x%08x)\n", idx, omx_err);
+		g_warning("could not set parameter 0x%08x omx_err(0x%08x)\n", idx,
+				omx_err);
 		return false;
 	}
 	return true;
 }
 
-static bool m_get_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx, OMX_PTR cfg)
+static bool m_get_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+		OMX_PTR cfg)
 {
 	OMX_ERRORTYPE omx_err;
 
@@ -123,7 +133,8 @@ static bool m_get_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx, OMX_PTR cfg)
 	return true;
 }
 
-static bool m_set_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx, OMX_PTR cfg)
+static bool m_set_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+		OMX_PTR cfg)
 {
 	OMX_ERRORTYPE omx_err;
 
@@ -135,13 +146,15 @@ static bool m_set_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx, OMX_PTR cfg)
 	return true;
 }
 
-static bool m_send_cmd(OMX_HANDLETYPE *handle, OMX_COMMANDTYPE cmd, OMX_U32 param)
+static bool m_send_cmd(OMX_HANDLETYPE *handle, OMX_COMMANDTYPE cmd,
+		OMX_U32 param)
 {
 	OMX_ERRORTYPE omx_err;
 
 	omx_err = OMX_SendCommand(handle, cmd, param, NULL);
 	if (omx_err != OMX_ErrorNone) {
-		g_warning("failed to send command %d(%d) omx_err(0x%08x)\n", cmd, param, omx_err);
+		g_warning("failed to send command %d(%d) omx_err(0x%08x)\n", cmd, param,
+				omx_err);
 		return false;
 	}
 	return true;
@@ -150,13 +163,8 @@ static bool m_send_cmd(OMX_HANDLETYPE *handle, OMX_COMMANDTYPE cmd, OMX_U32 para
 static struct audio_output *
 rpi_init(const struct config_param *param, GError **error_r)
 {
-	char *device_name = (char *)config_get_block_string(param, "device", NULL);
+	char *device_name = (char *)config_get_block_string(param, "device", "local");
 	struct rpi_data *od;
-
-	if (device_name == NULL) {
-		device_name = malloc(6);
-		strncpy(device_name, "local", 6);
-	}
 
 	od = g_new(struct rpi_data, 1);
 	od->device_name = device_name;
@@ -167,7 +175,6 @@ rpi_init(const struct config_param *param, GError **error_r)
 
 	if (!ao_base_init(&od->base, &rpi_output_plugin, param, error_r)) {
 		g_free(od);
-		// FIXME: devive_name leak?
 		return NULL;
 	}
 
@@ -181,10 +188,6 @@ rpi_finish(struct audio_output *ao)
 
 	ao_base_finish(&od->base);
 
-	// FIXME: not sure how to handle this chunk
-	//g_free(od->device_name);
-
-	// FIXME: another free_func
 	g_list_free(od->input_buffer_list);
 	g_list_free(od->input_buffers_avail);
 	g_mutex_clear(&od->buffer_lock);
@@ -206,7 +209,8 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	
 	buffer_size = (BUFFER_SIZE_SAMPLES * bitrate * audio_format->channels) >> 3;
 
-	OMX_INDEXTYPE types[] = {OMX_IndexParamAudioInit, OMX_IndexParamVideoInit, OMX_IndexParamImageInit, OMX_IndexParamOtherInit};
+	OMX_INDEXTYPE types[] = {OMX_IndexParamAudioInit, OMX_IndexParamVideoInit,
+		OMX_IndexParamImageInit, OMX_IndexParamOtherInit};
 
 	OMX_ERRORTYPE omx_err;
 
@@ -228,23 +232,31 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	}
 
 	OMX_INIT_STRUCTURE(port_param);
+	m_get_param(od->m_render, OMX_IndexParamAudioInit, &port_param);
+	od->m_input_port = port_param.nStartPortNumber;
 
+	OMX_INIT_STRUCTURE(port_param);
 	for(i = 0; i < 4; i++) {
 		if(m_get_param(od->m_render, types[i], &port_param)) {
 			for(j = 0; j < port_param.nPorts; j++) {
-				m_send_cmd(od->m_render, OMX_CommandPortDisable, port_param.nStartPortNumber + j);
+				OMX_INIT_STRUCTURE(port_def);
+				port_def.nPortIndex = port_param.nStartPortNumber + j;
+				m_get_param(od->m_render, OMX_IndexParamPortDefinition, &port_def);
+				if (port_def.bEnabled == OMX_FALSE) {
+					continue;
+				}
+				m_send_cmd(od->m_render, OMX_CommandPortDisable,
+						port_param.nStartPortNumber + j);
 			}
 		}
 	}
-
-	// FIXME: hadcoding is bad eh?
-	od->m_input_port  = 100;
 
 	OMX_INIT_STRUCTURE(port_def);
 	port_def.nPortIndex = od->m_input_port;
 	m_get_param(od->m_render, OMX_IndexParamPortDefinition, &port_def);
 	port_def.nBufferSize = buffer_size;
 	port_def.nBufferCountActual = buffers;
+	port_def.format.audio.eEncoding = OMX_AUDIO_CodingPCM;
 	m_set_param(od->m_render, OMX_IndexParamPortDefinition, &port_def);
 
 	OMX_INIT_STRUCTURE(pcm);
@@ -266,7 +278,8 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	OMX_INIT_STRUCTURE(port_def);
 	port_def.nPortIndex = od->m_input_port;
 	m_get_param(od->m_render, OMX_IndexParamPortDefinition, &port_def);
-	if(port_def.bEnabled != OMX_FALSE || port_def.nBufferCountActual == 0 || port_def.nBufferSize == 0)
+	if(port_def.bEnabled != OMX_FALSE || port_def.nBufferCountActual == 0
+			|| port_def.nBufferSize == 0)
 		g_warning("Failed to set buffers\n");
 
 	m_send_cmd(od->m_render, OMX_CommandPortEnable, od->m_input_port);
@@ -274,9 +287,11 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	for (i = 0; i != port_def.nBufferCountActual; i++) {
 		OMX_BUFFERHEADERTYPE *buffer = NULL;
 
-		omx_err = OMX_AllocateBuffer(od->m_render, &buffer, od->m_input_port, NULL, port_def.nBufferSize);
+		omx_err = OMX_AllocateBuffer(od->m_render, &buffer, od->m_input_port,
+				NULL, port_def.nBufferSize);
 		if (omx_err != OMX_ErrorNone)
-			g_warning("Failed to allocate buffer %d of %d (0x%08x)\n", i, port_def.nBufferSize, omx_err);
+			g_warning("Failed to allocate buffer %d of %d (0x%08x)\n", i,
+					port_def.nBufferSize, omx_err);
 
 		buffer->nInputPortIndex = od->m_input_port;
 		buffer->nFilledLen      = 0;
@@ -304,20 +319,21 @@ rpi_close(struct audio_output *ao)
 	GList *list_ptr = NULL;
 	OMX_PARAM_PORTDEFINITIONTYPE port_def;
 
+	m_send_cmd(od->m_render, OMX_CommandFlush, od->m_input_port);
+
 	m_send_cmd(od->m_render, OMX_CommandStateSet, OMX_StateIdle);
-	m_send_cmd(od->m_render, OMX_CommandStateSet, OMX_StateLoaded); //WHY
 
 	OMX_INIT_STRUCTURE(port_def);
 	port_def.nPortIndex = od->m_input_port;
 	m_get_param(od->m_render, OMX_IndexParamPortDefinition, &port_def);
-	if(port_def.bEnabled != OMX_TRUE || port_def.nBufferCountActual == 0 || port_def.nBufferSize == 0) {
-		g_warning("port buffer state error: enabled: %d; count: %d; size: %u\n", port_def.bEnabled, port_def.nBufferCountActual, port_def.nBufferSize);
+	if(port_def.bEnabled != OMX_TRUE || port_def.nBufferCountActual == 0
+			|| port_def.nBufferSize == 0) {
+		g_warning("port buffer state error: enabled: %d; count: %d; size: %u\n",
+				port_def.bEnabled, port_def.nBufferCountActual, port_def.nBufferSize);
 		return;
 	}
 
 	m_send_cmd(od->m_render, OMX_CommandPortDisable, od->m_input_port);
-
-	// FIXME: what is this madness
 	g_mutex_lock(&od->buffer_lock);
 	while (od->num_buffers_avail > 0) {
 		OMX_BUFFERHEADERTYPE *omx_buffer = NULL;
@@ -325,7 +341,8 @@ rpi_close(struct audio_output *ao)
 		list_ptr = g_list_last(od->input_buffer_list);
 		omx_buffer = list_ptr->data;
 		od->input_buffer_list = g_list_remove(od->input_buffer_list, omx_buffer);
-		od->input_buffers_avail = g_list_remove(od->input_buffers_avail, omx_buffer);
+		od->input_buffers_avail = g_list_remove(od->input_buffers_avail,
+				omx_buffer);
 		od->num_buffers_avail--;
 		OMX_FreeBuffer(od->m_render, od->m_input_port, omx_buffer);
 	}
@@ -342,22 +359,8 @@ static unsigned
 rpi_delay(struct audio_output *ao)
 {
 	struct rpi_data *od = (struct rpi_data *)ao;
-	/*OMX_ERRORTYPE omx_err;
-	OMX_PARAM_U32TYPE param;
-	OMX_INIT_STRUCTURE(param);
-
-	param.nPortIndex = od->m_input_port;
-
-	m_get_config(od->m_render, OMX_IndexConfigAudioRenderingLatency, &param);*/
 
 	return od->num_buffers_avail < 1 ? 50 : 0;
-
-	//return od->filled < NUM_BUFFERS || rpi_has_processed(od)
-		//? 0
-		/* we don't know exactly how long we must wait for the
-		   next buffer to finish, so this is a random
-		   guess: */
-		//: 50;
 }
 
 static size_t
@@ -372,14 +375,16 @@ rpi_play(struct audio_output *ao, const void *chunk, size_t size,
 	uint8_t *demuxer_content = (uint8_t *)chunk;
 
 	while(demuxer_bytes) {
-		omx_buffer = (OMX_BUFFERHEADERTYPE*)(g_list_last(od->input_buffers_avail)->data);
+		omx_buffer =
+			(OMX_BUFFERHEADERTYPE*)(g_list_last(od->input_buffers_avail)->data);
 		if (omx_buffer == NULL) {
 			g_warning("can't get a buffer wtf\n");
 			continue;
 		}
 		omx_buffer->nOffset = 0;
 		omx_buffer->nFlags  = 0;
-		omx_buffer->nFilledLen = (demuxer_bytes > omx_buffer->nAllocLen) ? omx_buffer->nAllocLen : demuxer_bytes;
+		omx_buffer->nFilledLen = (demuxer_bytes > omx_buffer->nAllocLen) ? \
+			omx_buffer->nAllocLen : demuxer_bytes;
 		memcpy(omx_buffer->pBuffer, demuxer_content, omx_buffer->nFilledLen);
 
 		omx_buffer->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN;
@@ -392,7 +397,8 @@ rpi_play(struct audio_output *ao, const void *chunk, size_t size,
 		omx_err = OMX_EmptyThisBuffer(od->m_render, omx_buffer);
 		g_mutex_lock(&od->buffer_lock);
 		od->num_buffers_avail--;
-		od->input_buffers_avail = g_list_remove(od->input_buffers_avail, omx_buffer);
+		od->input_buffers_avail = g_list_remove(od->input_buffers_avail,
+				omx_buffer);
 		if (omx_err != OMX_ErrorNone)
 			g_warning("%s: failed to empty buffer 0x%08x\n", __func__, omx_err);
 		g_mutex_unlock(&od->buffer_lock);
@@ -406,13 +412,9 @@ rpi_cancel(struct audio_output *ao)
 {
 	struct rpi_data *od = (struct rpi_data *)ao;
 
-	//od->filled = 0;
-	//alcMakeContextCurrent(od->context);
-	//alSourceStop(od->source);
-
-	/* force-unqueue all buffers */
-	//alSourcei(od->source, AL_BUFFER, 0);
-	//od->filled = 0;
+	// FIXME: logically we should flush on cancel but flushing here leads to
+	// carcking sound between songs on rpi.
+	//m_send_cmd(od->m_render, OMX_CommandFlush, od->m_input_port);
 }
 
 const struct audio_output_plugin rpi_output_plugin = {
