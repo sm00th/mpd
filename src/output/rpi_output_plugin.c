@@ -32,7 +32,6 @@
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "rpi"
 
-#define OMX_RENDER "OMX.broadcom.audio_render"
 #define BUFFER_SIZE_SAMPLES 1024
 
 #define OMX_INIT_STRUCTURE(a) \
@@ -46,7 +45,7 @@
 struct rpi_data {
 	struct audio_output base;
 
-	char*          device_name;
+	const char*    device_name;
 	OMX_HANDLETYPE m_render;
 	unsigned int   m_input_port;
 	GMutex         buffer_lock;
@@ -55,14 +54,16 @@ struct rpi_data {
 	uint8_t        num_buffers_avail;
 };
 
-static OMX_ERRORTYPE rpi_event_handler_callback(OMX_HANDLETYPE hComponent,
-		OMX_PTR pAppData, OMX_EVENTTYPE eEvent, OMX_U32 nData1, OMX_U32 nData2,
-		OMX_PTR pEventData)
+static OMX_ERRORTYPE rpi_event_handler_callback(
+		G_GNUC_UNUSED OMX_HANDLETYPE hComponent, G_GNUC_UNUSED OMX_PTR pAppData,
+		G_GNUC_UNUSED OMX_EVENTTYPE eEvent, G_GNUC_UNUSED OMX_U32 nData1,
+		G_GNUC_UNUSED OMX_U32 nData2, G_GNUC_UNUSED OMX_PTR pEventData)
 {
 	return 0;
 }
 
-static OMX_ERRORTYPE rpi_empty_buffer_done_callback(OMX_HANDLETYPE hComponent,
+static OMX_ERRORTYPE rpi_empty_buffer_done_callback(
+		G_GNUC_UNUSED OMX_HANDLETYPE hComponent,
 		OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
 {
 	struct rpi_data *od = (struct rpi_data *)pAppData;
@@ -73,8 +74,9 @@ static OMX_ERRORTYPE rpi_empty_buffer_done_callback(OMX_HANDLETYPE hComponent,
 	return 0;
 }
 
-static OMX_ERRORTYPE rpi_fill_buffer_done_callback(OMX_HANDLETYPE hComponent,
-		OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
+static OMX_ERRORTYPE rpi_fill_buffer_done_callback(
+		G_GNUC_UNUSED OMX_HANDLETYPE hComponent, G_GNUC_UNUSED OMX_PTR pAppData,
+		G_GNUC_UNUSED OMX_BUFFERHEADERTYPE* pBuffer)
 {
 	return 0;
 }
@@ -120,6 +122,7 @@ static bool m_set_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
 	return true;
 }
 
+/* Unused for now
 static bool m_get_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
 		OMX_PTR cfg)
 {
@@ -132,6 +135,7 @@ static bool m_get_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
 	}
 	return true;
 }
+*/
 
 static bool m_set_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
 		OMX_PTR cfg)
@@ -163,11 +167,10 @@ static bool m_send_cmd(OMX_HANDLETYPE *handle, OMX_COMMANDTYPE cmd,
 static struct audio_output *
 rpi_init(const struct config_param *param, GError **error_r)
 {
-	char *device_name = (char *)config_get_block_string(param, "device", "local");
 	struct rpi_data *od;
 
 	od = g_new(struct rpi_data, 1);
-	od->device_name = device_name;
+	od->device_name = config_get_block_string(param, "device", "local");
 	od->input_buffer_list = g_list_alloc();
 	od->input_buffers_avail = g_list_alloc();
 	od->num_buffers_avail = 0;
@@ -196,10 +199,11 @@ rpi_finish(struct audio_output *ao)
 
 static bool
 rpi_open(struct audio_output *ao, struct audio_format *audio_format,
-	    GError **error)
+	    G_GNUC_UNUSED GError **error)
 {
 	struct rpi_data *od = (struct rpi_data *)ao;
 	uint8_t i, j;
+	char render[] = "OMX.broadcom.audio_render";
 	int buffers = 10;
 	int buffer_size;
 	uint8_t bitrate = 16;
@@ -227,7 +231,7 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	bcm_host_init();
 	OMX_Init();
 
-	if (!m_get_handle(&od->m_render, (OMX_STRING)OMX_RENDER, od, &m_callbacks)) {
+	if (!m_get_handle(&od->m_render, render, od, &m_callbacks)) {
 		return false;
 	}
 
@@ -372,7 +376,7 @@ rpi_play(struct audio_output *ao, const void *chunk, size_t size,
 	OMX_BUFFERHEADERTYPE *omx_buffer = NULL;
 
 	unsigned int demuxer_bytes = (unsigned int)size;
-	uint8_t *demuxer_content = (uint8_t *)chunk;
+	const uint8_t *demuxer_content = chunk;
 
 	while(demuxer_bytes) {
 		omx_buffer =
@@ -408,12 +412,11 @@ rpi_play(struct audio_output *ao, const void *chunk, size_t size,
 }
 
 static void
-rpi_cancel(struct audio_output *ao)
+rpi_cancel(G_GNUC_UNUSED struct audio_output *ao)
 {
-	struct rpi_data *od = (struct rpi_data *)ao;
-
 	// FIXME: logically we should flush on cancel but flushing here leads to
-	// carcking sound between songs on rpi.
+	// carcking sound between tracks on rpi.
+	//struct rpi_data *od = (struct rpi_data *)ao;
 	//m_send_cmd(od->m_render, OMX_CommandFlush, od->m_input_port);
 }
 
