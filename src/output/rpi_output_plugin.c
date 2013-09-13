@@ -19,7 +19,7 @@
 
 #include "config.h"
 #include "rpi_output_plugin.h"
-#include "output_api.h"
+#include "OutputAPI.hxx"
 
 #include <glib.h>
 
