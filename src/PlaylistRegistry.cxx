@@ -26,6 +26,7 @@
 #include "playlist/LastFMPlaylistPlugin.hxx"
 #include "playlist/DespotifyPlaylistPlugin.hxx"
 #include "playlist/SoundCloudPlaylistPlugin.hxx"
+#include "playlist/EightTracksPlaylistPlugin.hxx"
 #include "playlist/PlsPlaylistPlugin.hxx"
 #include "playlist/AsxPlaylistPlugin.hxx"
 #include "playlist/RssPlaylistPlugin.hxx"
@@ -58,6 +59,9 @@ const struct playlist_plugin *const playlist_plugins[] = {
 #endif
 #ifdef ENABLE_SOUNDCLOUD
 	&soundcloud_playlist_plugin,
+#endif
+#ifdef ENABLE_EIGHTTRACKS
+	&eighttracks_playlist_plugin,
 #endif
 	&cue_playlist_plugin,
 	&embcue_playlist_plugin,

@@ -280,6 +280,11 @@ AC_ARG_ENABLE(soundcloud,
 		[enable support for soundcloud.com]),,
 	[enable_soundcloud=auto])
 
+AC_ARG_ENABLE(eighttracks,
+	AS_HELP_STRING([--enable-eighttracks],
+		[enable support for 8tracks.com]),,
+	[enable_eighttracks=auto])
+
 AC_ARG_ENABLE(lame-encoder,
 	AS_HELP_STRING([--enable-lame-encoder],
 		[enable the LAME mp3 encoder]),,
@@ -745,6 +750,21 @@ if test x$enable_soundcloud = xyes; then
 	AC_DEFINE(ENABLE_SOUNDCLOUD, 1, [Define when soundcloud is enabled])
 fi
 AM_CONDITIONAL(ENABLE_SOUNDCLOUD, test x$enable_soundcloud = xyes)
+AC_SUBST(YAJL_LIBS)
+
+dnl --------------------------------- eighttracks ------------------------------
+if test x$enable_eighttracks != xno; then
+	PKG_CHECK_MODULES([YAJL], [yajl >= 2.0],
+		[found_eighttracks=yes],
+		AC_CHECK_LIB([yajl], [yajl_alloc],
+			[found_eighttracks=yes YAJL_CFLAGS=-DHAVE_YAJL1 YAJL_LIBS=-lyajl],
+			[found_eighttracks=no]))
+fi
+MPD_AUTO_RESULT([eighttracks], [eighttracks.com support], [libyajl not found])
+if test x$enable_eighttracks = xyes; then
+	AC_DEFINE(ENABLE_EIGHTTRACKS, 1, [Define when eighttracks is enabled])
+fi
+AM_CONDITIONAL(ENABLE_EIGHTTRACKS, test x$enable_eighttracks = xyes)
 AC_SUBST(YAJL_LIBS)
 
 dnl ---------------------------------- cdio ---------------------------------
@@ -1648,6 +1668,7 @@ results(curl,[CURL])
 results(despotify,[Despotify])
 results(lastfm,[Last.FM])
 results(soundcloud,[Soundcloud])
+results(eighttracks,[eighttracks])
 printf '\n\t'
 results(mms,[MMS])
 

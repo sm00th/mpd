@@ -966,6 +966,13 @@ libplaylist_plugins_a_SOURCES += \
 PLAYLIST_LIBS += $(YAJL_LIBS)
 endif
 
+if ENABLE_EIGHTTRACKS
+libplaylist_plugins_a_SOURCES += \
+	src/playlist/EightTracksPlaylistPlugin.cxx \
+	src/playlist/EightTracksPlaylistPlugin.hxx
+PLAYLIST_LIBS += $(YAJL_LIBS)
+endif
+
 #
 # Filter plugins
 #
