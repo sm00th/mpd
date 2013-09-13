@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003-2011 The Music Player Daemon Project
+ * Copyright (C) 2003-2013 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,12 +21,10 @@
 #include "IOThread.hxx"
 #include "InputInit.hxx"
 #include "InputStream.hxx"
-#include "conf.h"
+#include "ConfigGlobal.hxx"
 #include "stdbin.h"
-
-extern "C" {
-#include "text_input_stream.h"
-}
+#include "TextInputStream.hxx"
+#include "util/Error.hxx"
 
 #ifdef ENABLE_ARCHIVE
 #include "ArchiveList.hxx"
@@ -39,8 +37,8 @@ extern "C" {
 #include <stdlib.h>
 
 static void
-my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+my_log_func(const gchar *log_domain, gcc_unused GLogLevelFlags log_level,
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_domain != NULL)
 		g_printerr("%s: %s\n", log_domain, message);
@@ -49,56 +47,53 @@ my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
 }
 
 static void
-dump_text_file(struct text_input_stream *is)
+dump_text_file(TextInputStream &is)
 {
-	const char *line;
-	while ((line = text_input_stream_read(is)) != NULL)
-		printf("'%s'\n", line);
+	std::string line;
+	while (is.ReadLine(line))
+		printf("'%s'\n", line.c_str());
 }
 
 static int
 dump_input_stream(struct input_stream *is)
 {
-	GError *error = NULL;
+	Error error;
 
-	input_stream_lock(is);
+	is->Lock();
 
 	/* wait until the stream becomes ready */
 
-	input_stream_wait_ready(is);
+	is->WaitReady();
 
-	if (!input_stream_check(is, &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		input_stream_unlock(is);
+	if (!is->Check(error)) {
+		g_warning("%s", error.GetMessage());
+		is->Unlock();
 		return EXIT_FAILURE;
 	}
 
 	/* read data and tags from the stream */
 
-	input_stream_unlock(is);
+	is->Unlock();
+	{
+		TextInputStream tis(is);
+		dump_text_file(tis);
+	}
 
-	struct text_input_stream *tis = text_input_stream_new(is);
-	dump_text_file(tis);
-	text_input_stream_free(tis);
+	is->Lock();
 
-	input_stream_lock(is);
-
-	if (!input_stream_check(is, &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		input_stream_unlock(is);
+	if (!is->Check(error)) {
+		g_warning("%s", error.GetMessage());
+		is->Unlock();
 		return EXIT_FAILURE;
 	}
 
-	input_stream_unlock(is);
+	is->Unlock();
 
 	return 0;
 }
 
 int main(int argc, char **argv)
 {
-	GError *error = NULL;
 	struct input_stream *is;
 	int ret;
 
@@ -109,7 +104,10 @@ int main(int argc, char **argv)
 
 	/* initialize GLib */
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
+#endif
+
 	g_log_set_default_handler(my_log_func, NULL);
 
 	/* initialize MPD */
@@ -117,19 +115,15 @@ int main(int argc, char **argv)
 	config_global_init();
 
 	io_thread_init();
-	if (!io_thread_start(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		return EXIT_FAILURE;
-	}
+	io_thread_start();
 
 #ifdef ENABLE_ARCHIVE
 	archive_plugin_init_all();
 #endif
 
-	if (!input_stream_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	Error error;
+	if (!input_stream_global_init(error)) {
+		g_warning("%s", error.GetMessage());
 		return 2;
 	}
 
@@ -138,16 +132,15 @@ int main(int argc, char **argv)
 	Mutex mutex;
 	Cond cond;
 
-	is = input_stream_open(argv[1], mutex, cond, &error);
+	is = input_stream::Open(argv[1], mutex, cond, error);
 	if (is != NULL) {
 		ret = dump_input_stream(is);
-		input_stream_close(is);
+		is->Close();
 	} else {
-		if (error != NULL) {
-			g_warning("%s", error->message);
-			g_error_free(error);
-		} else
-			g_printerr("input_stream_open() failed\n");
+		if (error.IsDefined())
+			g_warning("%s", error.GetMessage());
+		else
+			g_printerr("input_stream::Open() failed\n");
 		ret = 2;
 	}
 

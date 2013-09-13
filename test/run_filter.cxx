@@ -18,15 +18,18 @@
  */
 
 #include "config.h"
-#include "conf.h"
+#include "ConfigData.hxx"
+#include "ConfigGlobal.hxx"
 #include "fs/Path.hxx"
 #include "AudioParser.hxx"
-#include "audio_format.h"
+#include "AudioFormat.hxx"
 #include "FilterPlugin.hxx"
 #include "FilterInternal.hxx"
-#include "PcmVolume.hxx"
-#include "mixer_control.h"
+#include "pcm/PcmVolume.hxx"
+#include "MixerControl.hxx"
 #include "stdbin.h"
+#include "util/Error.hxx"
+#include "system/FatalError.hxx"
 
 #include <glib.h>
 
@@ -36,15 +39,15 @@
 #include <unistd.h>
 
 bool
-mixer_set_volume(G_GNUC_UNUSED struct mixer *mixer,
-		 G_GNUC_UNUSED unsigned volume, G_GNUC_UNUSED GError **error_r)
+mixer_set_volume(gcc_unused Mixer *mixer,
+		 gcc_unused unsigned volume, gcc_unused Error &error)
 {
 	return true;
 }
 
 static void
-my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+my_log_func(const gchar *log_domain, gcc_unused GLogLevelFlags log_level,
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_domain != NULL)
 		g_printerr("%s: %s\n", log_domain, message);
@@ -58,8 +61,7 @@ find_named_config_block(ConfigOption option, const char *name)
 	const struct config_param *param = NULL;
 
 	while ((param = config_get_next_param(option, param)) != NULL) {
-		const char *current_name =
-			config_get_block_string(param, "name", NULL);
+		const char *current_name = param->GetBlockValue("name");
 		if (current_name != NULL && strcmp(current_name, name) == 0)
 			return param;
 	}
@@ -71,7 +73,6 @@ static Filter *
 load_filter(const char *name)
 {
 	const struct config_param *param;
-	GError *error = NULL;
 
 	param = find_named_config_block(CONF_AUDIO_FILTER, name);
 	if (param == NULL) {
@@ -79,10 +80,10 @@ load_filter(const char *name)
 		return nullptr;
 	}
 
-	Filter *filter = filter_configured_new(param, &error);
+	Error error;
+	Filter *filter = filter_configured_new(*param, error);
 	if (filter == NULL) {
-		g_printerr("Failed to load filter: %s\n", error->message);
-		g_error_free(error);
+		g_printerr("Failed to load filter: %s\n", error.GetMessage());
 		return NULL;
 	}
 
@@ -91,11 +92,8 @@ load_filter(const char *name)
 
 int main(int argc, char **argv)
 {
-	struct audio_format audio_format;
 	struct audio_format_string af_string;
-	bool success;
-	GError *error = NULL;
-	const struct audio_format *out_audio_format;
+	Error error2;
 	char buffer[4096];
 
 	if (argc < 3 || argc > 4) {
@@ -105,31 +103,29 @@ int main(int argc, char **argv)
 
 	const Path config_path = Path::FromFS(argv[1]);
 
-	audio_format_init(&audio_format, 44100, SAMPLE_FORMAT_S16, 2);
+	AudioFormat audio_format(44100, SampleFormat::S16, 2);
 
 	/* initialize GLib */
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
+#endif
+
 	g_log_set_default_handler(my_log_func, NULL);
 
 	/* read configuration file (mpd.conf) */
 
 	config_global_init();
-	if (!ReadConfigFile(config_path, &error)) {
-		g_printerr("%s:", error->message);
-		g_error_free(error);
-		return 1;
-	}
+	if (!ReadConfigFile(config_path, error2))
+		FatalError(error2);
 
 	/* parse the audio format */
 
 	if (argc > 3) {
-		success = audio_format_parse(&audio_format, argv[3],
-					     false, &error);
-		if (!success) {
+		Error error;
+		if (!audio_format_parse(audio_format, argv[3], false, error)) {
 			g_printerr("Failed to parse audio format: %s\n",
-				   error->message);
-			g_error_free(error);
+				   error.GetMessage());
 			return 1;
 		}
 	}
@@ -142,10 +138,10 @@ int main(int argc, char **argv)
 
 	/* open the filter */
 
-	out_audio_format = filter->Open(audio_format, &error);
-	if (out_audio_format == NULL) {
-		g_printerr("Failed to open filter: %s\n", error->message);
-		g_error_free(error);
+	Error error;
+	const AudioFormat out_audio_format = filter->Open(audio_format, error);
+	if (!out_audio_format.IsDefined()) {
+		g_printerr("Failed to open filter: %s\n", error.GetMessage());
 		delete filter;
 		return 1;
 	}
@@ -165,9 +161,9 @@ int main(int argc, char **argv)
 			break;
 
 		dest = filter->FilterPCM(buffer, (size_t)nbytes,
-					 &length, &error);
+					 &length, error);
 		if (dest == NULL) {
-			g_printerr("Filter failed: %s\n", error->message);
+			g_printerr("Filter failed: %s\n", error.GetMessage());
 			filter->Close();
 			delete filter;
 			return 1;

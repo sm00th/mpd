@@ -19,15 +19,16 @@
 
 #include "config.h"
 #include "Permission.hxx"
-#include "mpd_error.h"
-#include "conf.h"
+#include "ConfigData.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
+#include "system/FatalError.hxx"
 
 #include <map>
 #include <string>
 
 #include <glib.h>
 
-#include <stdbool.h>
 #include <string.h>
 
 #define PERMISSION_PASSWORD_CHAR	'@'
@@ -63,7 +64,7 @@ static unsigned parsePermissions(const char *string)
 		} else if (strcmp(temp, PERMISSION_ADMIN_STRING) == 0) {
 			permission |= PERMISSION_ADMIN;
 		} else {
-			MPD_ERROR("unknown permission \"%s\"", temp);
+			FormatFatalError("unknown permission \"%s\"", temp);
 		}
 	}
 
@@ -91,10 +92,10 @@ void initPermissions(void)
 				strchr(param->value, PERMISSION_PASSWORD_CHAR);
 
 			if (separator == NULL)
-				MPD_ERROR("\"%c\" not found in password string "
-					"\"%s\", line %i",
-					PERMISSION_PASSWORD_CHAR,
-					param->value, param->line);
+				FormatFatalError("\"%c\" not found in password string "
+						 "\"%s\", line %i",
+						 PERMISSION_PASSWORD_CHAR,
+						 param->value, param->line);
 
 			password = g_strndup(param->value,
 					     separator - param->value);

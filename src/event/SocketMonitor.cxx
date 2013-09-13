@@ -20,7 +20,7 @@
 #include "config.h"
 #include "SocketMonitor.hxx"
 #include "Loop.hxx"
-#include "fd_util.h"
+#include "system/fd_util.h"
 #include "gcc.h"
 
 #include <assert.h>
@@ -31,6 +31,19 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #endif
+
+#ifdef USE_EPOLL
+
+void
+SocketMonitor::Dispatch(unsigned flags)
+{
+	flags &= GetScheduledFlags();
+
+	if (flags != 0 && !OnSocketReady(flags) && IsDefined())
+		Cancel();
+}
+
+#else
 
 /*
  * GSource methods
@@ -88,6 +101,8 @@ SocketMonitor::SocketMonitor(int _fd, EventLoop &_loop)
 	Open(_fd);
 }
 
+#endif
+
 SocketMonitor::~SocketMonitor()
 {
 	if (IsDefined())
@@ -98,10 +113,14 @@ void
 SocketMonitor::Open(int _fd)
 {
 	assert(fd < 0);
+#ifndef USE_EPOLL
 	assert(source == nullptr);
+#endif
 	assert(_fd >= 0);
 
 	fd = _fd;
+
+#ifndef USE_EPOLL
 	poll = {fd, 0, 0};
 
 	source = (Source *)g_source_new(&socket_monitor_source_funcs,
@@ -110,6 +129,7 @@ SocketMonitor::Open(int _fd)
 
 	g_source_attach(&source->base, loop.GetContext());
 	g_source_add_poll(&source->base, &poll);
+#endif
 }
 
 int
@@ -122,9 +142,11 @@ SocketMonitor::Steal()
 	int result = fd;
 	fd = -1;
 
+#ifndef USE_EPOLL
 	g_source_destroy(&source->base);
 	g_source_unref(&source->base);
 	source = nullptr;
+#endif
 
 	return result;
 }
@@ -135,9 +157,36 @@ SocketMonitor::Close()
 	close_socket(Steal());
 }
 
+void
+SocketMonitor::Schedule(unsigned flags)
+{
+	assert(IsDefined());
+
+	if (flags == GetScheduledFlags())
+		return;
+
+#ifdef USE_EPOLL
+	if (scheduled_flags == 0)
+		loop.AddFD(fd, flags, *this);
+	else if (flags == 0)
+		loop.RemoveFD(fd, *this);
+	else
+		loop.ModifyFD(fd, flags, *this);
+
+	scheduled_flags = flags;
+#else
+	poll.events = flags;
+	poll.revents &= flags;
+
+	loop.WakeUp();
+#endif
+}
+
 SocketMonitor::ssize_t
 SocketMonitor::Read(void *data, size_t length)
 {
+	assert(IsDefined());
+
 	int flags = 0;
 #ifdef MSG_DONTWAIT
 	flags |= MSG_DONTWAIT;
@@ -149,6 +198,8 @@ SocketMonitor::Read(void *data, size_t length)
 SocketMonitor::ssize_t
 SocketMonitor::Write(const void *data, size_t length)
 {
+	assert(IsDefined());
+
 	int flags = 0;
 #ifdef MSG_NOSIGNAL
 	flags |= MSG_NOSIGNAL;
@@ -158,10 +209,4 @@ SocketMonitor::Write(const void *data, size_t length)
 #endif
 
 	return send(Get(), (const char *)data, length, flags);
-}
-
-void
-SocketMonitor::CommitEventFlags()
-{
-	loop.WakeUp();
 }

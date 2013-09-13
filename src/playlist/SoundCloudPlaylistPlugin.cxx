@@ -19,11 +19,13 @@
 
 #include "config.h"
 #include "SoundCloudPlaylistPlugin.hxx"
-#include "MemoryPlaylistProvider.hxx"
-#include "conf.h"
-#include "input_stream.h"
-#include "song.h"
-#include "tag.h"
+#include "PlaylistPlugin.hxx"
+#include "MemorySongEnumerator.hxx"
+#include "ConfigData.hxx"
+#include "InputStream.hxx"
+#include "Song.hxx"
+#include "tag/Tag.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 #include <yajl/yajl_parse.h>
@@ -35,10 +37,9 @@ static struct {
 } soundcloud_config;
 
 static bool
-soundcloud_init(const struct config_param *param)
+soundcloud_init(const config_param &param)
 {
-	soundcloud_config.apikey =
-		config_dup_block_string(param, "apikey", NULL);
+	soundcloud_config.apikey = param.DupBlockString("apikey");
 	if (soundcloud_config.apikey == NULL) {
 		g_debug("disabling the soundcloud playlist plugin "
 			"because API key is not set");
@@ -203,17 +204,17 @@ static int handle_end_map(void *ctx)
 	/* got_url == 1, track finished, make it into a song */
 	data->got_url = 0;
 
-	struct song *s;
-	struct tag *t;
+	Song *s;
 	char *u;
 
 	u = g_strconcat(data->stream_url, "?client_id=", soundcloud_config.apikey, NULL);
-	s = song_remote_new(u);
+	s = Song::NewRemote(u);
 	g_free(u);
-	t = tag_new();
+
+	Tag *t = new Tag();
 	t->time = data->duration / 1000;
 	if (data->title != NULL)
-		tag_add_item(t, TAG_NAME, data->title);
+		t->AddItem(TAG_NAME, data->title);
 	s->tag = t;
 
 	data->songs.emplace_front(s);
@@ -245,39 +246,36 @@ static int
 soundcloud_parse_json(const char *url, yajl_handle hand,
 		      Mutex &mutex, Cond &cond)
 {
-	struct input_stream *input_stream;
-	GError *error = NULL;
 	char buffer[4096];
 	unsigned char *ubuffer = (unsigned char *)buffer;
-	size_t nbytes;
 
-	input_stream = input_stream_open(url, mutex, cond, &error);
+	Error error;
+	input_stream *input_stream = input_stream::Open(url, mutex, cond,
+							error);
 	if (input_stream == NULL) {
-		if (error != NULL) {
-			g_warning("%s", error->message);
-			g_error_free(error);
-		}
+		if (error.IsDefined())
+			g_warning("%s", error.GetMessage());
 		return -1;
 	}
 
 	mutex.lock();
-	input_stream_wait_ready(input_stream);
+	input_stream->WaitReady();
 
 	yajl_status stat;
 	int done = 0;
 
 	while (!done) {
-		nbytes = input_stream_read(input_stream, buffer, sizeof(buffer), &error);
+		const size_t nbytes =
+			input_stream->Read(buffer, sizeof(buffer), error);
 		if (nbytes == 0) {
-			if (error != NULL) {
-				g_warning("%s", error->message);
-				g_error_free(error);
-			}
-			if (input_stream_eof(input_stream)) {
+			if (error.IsDefined())
+				g_warning("%s", error.GetMessage());
+
+			if (input_stream->IsEOF()) {
 				done = true;
 			} else {
 				mutex.unlock();
-				input_stream_close(input_stream);
+				input_stream->Close();
 				return -1;
 			}
 		}
@@ -305,7 +303,7 @@ soundcloud_parse_json(const char *url, yajl_handle hand,
 	}
 
 	mutex.unlock();
-	input_stream_close(input_stream);
+	input_stream->Close();
 
 	return 0;
 }
@@ -318,7 +316,7 @@ soundcloud_parse_json(const char *url, yajl_handle hand,
  *	soundcloud://url/<url or path of soundcloud page>
  */
 
-static struct playlist_provider *
+static SongEnumerator *
 soundcloud_open_uri(const char *uri, Mutex &mutex, Cond &cond)
 {
 	char *s, *p;
@@ -392,7 +390,7 @@ soundcloud_open_uri(const char *uri, Mutex &mutex, Cond &cond)
 		return NULL;
 
 	data.songs.reverse();
-	return new MemoryPlaylistProvider(std::move(data.songs));
+	return new MemorySongEnumerator(std::move(data.songs));
 }
 
 static const char *const soundcloud_schemes[] = {
@@ -406,8 +404,6 @@ const struct playlist_plugin soundcloud_playlist_plugin = {
 	soundcloud_init,
 	soundcloud_finish,
 	soundcloud_open_uri,
-	nullptr,
-	nullptr,
 	nullptr,
 
 	soundcloud_schemes,

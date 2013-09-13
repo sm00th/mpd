@@ -21,21 +21,19 @@
 #include "DecoderThread.hxx"
 #include "DecoderControl.hxx"
 #include "DecoderInternal.hxx"
-#include "decoder_error.h"
-#include "decoder_plugin.h"
-#include "song.h"
-#include "mpd_error.h"
+#include "DecoderError.hxx"
+#include "DecoderPlugin.hxx"
+#include "Song.hxx"
+#include "system/FatalError.hxx"
 #include "Mapper.hxx"
 #include "fs/Path.hxx"
-#include "decoder_api.h"
-#include "tag.h"
+#include "DecoderAPI.hxx"
+#include "tag/Tag.hxx"
 #include "InputStream.hxx"
 #include "DecoderList.hxx"
-
-extern "C" {
-#include "replay_gain_ape.h"
-#include "uri.h"
-}
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
+#include "tag/ApeReplayGain.hxx"
 
 #include <glib.h>
 
@@ -62,7 +60,7 @@ decoder_command_finished_locked(struct decoder_control *dc)
 }
 
 /**
- * Opens the input stream with input_stream_open(), and waits until
+ * Opens the input stream with input_stream::Open(), and waits until
  * the stream gets ready.  If a decoder STOP command is received
  * during that, it cancels the operation (but does not close the
  * stream).
@@ -75,15 +73,12 @@ decoder_command_finished_locked(struct decoder_control *dc)
 static struct input_stream *
 decoder_input_stream_open(struct decoder_control *dc, const char *uri)
 {
-	GError *error = NULL;
-	struct input_stream *is;
+	Error error;
 
-	is = input_stream_open(uri, dc->mutex, dc->cond, &error);
+	input_stream *is = input_stream::Open(uri, dc->mutex, dc->cond, error);
 	if (is == NULL) {
-		if (error != NULL) {
-			g_warning("%s", error->message);
-			g_error_free(error);
-		}
+		if (error.IsDefined())
+			g_warning("%s", error.GetMessage());
 
 		return NULL;
 	}
@@ -93,20 +88,18 @@ decoder_input_stream_open(struct decoder_control *dc, const char *uri)
 
 	dc->Lock();
 
-	input_stream_update(is);
+	is->Update();
 	while (!is->ready &&
 	       dc->command != DECODE_COMMAND_STOP) {
 		dc->Wait();
 
-		input_stream_update(is);
+		is->Update();
 	}
 
-	if (!input_stream_check(is, &error)) {
+	if (!is->Check(error)) {
 		dc->Unlock();
 
-		g_warning("%s", error->message);
-		g_error_free(error);
-
+		g_warning("%s", error.GetMessage());
 		return NULL;
 	}
 
@@ -135,7 +128,7 @@ decoder_stream_decode(const struct decoder_plugin *plugin,
 		return true;
 
 	/* rewind the stream, so each plugin gets a fresh start */
-	input_stream_seek(input_stream, 0, SEEK_SET, NULL);
+	input_stream->Seek(0, SEEK_SET, IgnoreError());
 
 	decoder->dc->Unlock();
 
@@ -307,7 +300,7 @@ decoder_run_stream(struct decoder *decoder, const char *uri)
 	g_slist_free(tried);
 
 	dc->Unlock();
-	input_stream_close(input_stream);
+	input_stream->Close();
 	dc->Lock();
 
 	return success;
@@ -365,7 +358,7 @@ decoder_run_file(struct decoder *decoder, const char *path_fs)
 
 			dc->Unlock();
 
-			input_stream_close(input_stream);
+			input_stream->Close();
 
 			if (success) {
 				dc->Lock();
@@ -380,18 +373,18 @@ decoder_run_file(struct decoder *decoder, const char *path_fs)
 
 static void
 decoder_run_song(struct decoder_control *dc,
-		 const struct song *song, const char *uri)
+		 const Song *song, const char *uri)
 {
 	decoder decoder(dc, dc->start_ms > 0,
-			song->tag != NULL && song_is_file(song)
-			? tag_dup(song->tag) : nullptr);
+			song->tag != NULL && song->IsFile()
+			? new Tag(*song->tag) : nullptr);
 	int ret;
 
 	dc->state = DECODE_STATE_START;
 
 	decoder_command_finished_locked(dc);
 
-	ret = song_is_file(song)
+	ret = song->IsFile()
 		? decoder_run_file(&decoder, uri)
 		: decoder_run_stream(&decoder, uri);
 
@@ -414,8 +407,8 @@ decoder_run_song(struct decoder_control *dc,
 		if (allocated != NULL)
 			error_uri = allocated;
 
-		dc->error = g_error_new(decoder_quark(), 0,
-					"Failed to decode %s", error_uri);
+		dc->error.Format(decoder_domain,
+				 "Failed to decode %s", error_uri);
 		g_free(allocated);
 	}
 
@@ -427,20 +420,19 @@ decoder_run(struct decoder_control *dc)
 {
 	dc->ClearError();
 
-	const struct song *song = dc->song;
+	const Song *song = dc->song;
 	char *uri;
 
 	assert(song != NULL);
 
-	if (song_is_file(song))
+	if (song->IsFile())
 		uri = map_song_fs(song).Steal();
 	else
-		uri = song_get_uri(song);
+		uri = song->GetURI();
 
 	if (uri == NULL) {
 		dc->state = DECODE_STATE_ERROR;
-		dc->error = g_error_new(decoder_quark(), 0,
-					"Failed to map song");
+		dc->error.Set(decoder_domain, "Failed to map song");
 
 		decoder_command_finished_locked(dc);
 		return;
@@ -494,13 +486,16 @@ decoder_task(gpointer arg)
 void
 decoder_thread_start(struct decoder_control *dc)
 {
-	GError *e = NULL;
-
 	assert(dc->thread == NULL);
 
 	dc->quit = false;
 
+#if GLIB_CHECK_VERSION(2,32,0)
+	dc->thread = g_thread_new("thread", decoder_task, dc);
+#else
+	GError *e = NULL;
 	dc->thread = g_thread_create(decoder_task, dc, true, &e);
 	if (dc->thread == NULL)
-		MPD_ERROR("Failed to spawn decoder task: %s", e->message);
+		FatalError("Failed to spawn decoder task", e);
+#endif
 }

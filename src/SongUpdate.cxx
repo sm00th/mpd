@@ -18,26 +18,20 @@
  */
 
 #include "config.h" /* must be first for large file support */
-
-extern "C" {
-#include "song.h"
-#include "uri.h"
-}
-
+#include "Song.hxx"
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
 #include "Directory.hxx"
 #include "Mapper.hxx"
 #include "fs/Path.hxx"
 #include "fs/FileSystem.hxx"
-#include "tag.h"
-#include "input_stream.h"
-#include "decoder_plugin.h"
+#include "InputStream.hxx"
+#include "DecoderPlugin.hxx"
 #include "DecoderList.hxx"
-
-extern "C" {
-#include "tag_ape.h"
-#include "tag_id3.h"
-#include "tag_handler.h"
-}
+#include "tag/Tag.hxx"
+#include "tag/TagHandler.hxx"
+#include "tag/TagId3.hxx"
+#include "tag/ApeTag.hxx"
 
 #include <glib.h>
 
@@ -46,26 +40,26 @@ extern "C" {
 #include <sys/stat.h>
 #include <stdio.h>
 
-struct song *
-song_file_load(const char *path_utf8, Directory *parent)
+Song *
+Song::LoadFile(const char *path_utf8, Directory *parent)
 {
-	struct song *song;
+	Song *song;
 	bool ret;
 
 	assert((parent == NULL) == g_path_is_absolute(path_utf8));
 	assert(!uri_has_scheme(path_utf8));
 	assert(strchr(path_utf8, '\n') == NULL);
 
-	song = song_file_new(path_utf8, parent);
+	song = NewFile(path_utf8, parent);
 
 	//in archive ?
 	if (parent != NULL && parent->device == DEVICE_INARCHIVE) {
-		ret = song_file_update_inarchive(song);
+		ret = song->UpdateFileInArchive();
 	} else {
-		ret = song_file_update(song);
+		ret = song->UpdateFile();
 	}
 	if (!ret) {
-		song_free(song);
+		song->Free();
 		return NULL;
 	}
 
@@ -84,18 +78,18 @@ tag_scan_fallback(const char *path,
 }
 
 bool
-song_file_update(struct song *song)
+Song::UpdateFile()
 {
 	const char *suffix;
 	const struct decoder_plugin *plugin;
 	struct stat st;
 	struct input_stream *is = NULL;
 
-	assert(song_is_file(song));
+	assert(IsFile());
 
 	/* check if there's a suffix and a plugin */
 
-	suffix = uri_get_suffix(song->uri);
+	suffix = uri_get_suffix(uri);
 	if (suffix == NULL)
 		return false;
 
@@ -103,56 +97,53 @@ song_file_update(struct song *song)
 	if (plugin == NULL)
 		return false;
 
-	const Path path_fs = map_song_fs(song);
+	const Path path_fs = map_song_fs(this);
 	if (path_fs.IsNull())
 		return false;
 
-	if (song->tag != NULL) {
-		tag_free(song->tag);
-		song->tag = NULL;
-	}
+	delete tag;
+	tag = nullptr;
 
 	if (!StatFile(path_fs, st) || !S_ISREG(st.st_mode)) {
 		return false;
 	}
 
-	song->mtime = st.st_mtime;
+	mtime = st.st_mtime;
 
 	Mutex mutex;
 	Cond cond;
 
 	do {
 		/* load file tag */
-		song->tag = tag_new();
+		tag = new Tag();
 		if (decoder_plugin_scan_file(plugin, path_fs.c_str(),
-					     &full_tag_handler, song->tag))
+					     &full_tag_handler, tag))
 			break;
 
-		tag_free(song->tag);
-		song->tag = NULL;
+		delete tag;
+		tag = nullptr;
 
 		/* fall back to stream tag */
 		if (plugin->scan_stream != NULL) {
 			/* open the input_stream (if not already
 			   open) */
-			if (is == NULL) {
-				is = input_stream_open(path_fs.c_str(),
-						       mutex, cond,
-						       NULL);
-			}
+			if (is == NULL)
+				is = input_stream::Open(path_fs.c_str(),
+							mutex, cond,
+							IgnoreError());
 
 			/* now try the stream_tag() method */
 			if (is != NULL) {
-				song->tag = tag_new();
+				tag = new Tag();
 				if (decoder_plugin_scan_stream(plugin, is,
 							       &full_tag_handler,
-							       song->tag))
+							       tag))
 					break;
 
-				tag_free(song->tag);
-				song->tag = NULL;
+				delete tag;
+				tag = nullptr;
 
-				input_stream_lock_seek(is, 0, SEEK_SET, NULL);
+				is->LockSeek(0, SEEK_SET, IgnoreError());
 			}
 		}
 
@@ -160,40 +151,38 @@ song_file_update(struct song *song)
 	} while (plugin != NULL);
 
 	if (is != NULL)
-		input_stream_close(is);
+		is->Close();
 
-	if (song->tag != NULL && tag_is_empty(song->tag))
-		tag_scan_fallback(path_fs.c_str(), &full_tag_handler,
-				  song->tag);
+	if (tag != nullptr && tag->IsEmpty())
+		tag_scan_fallback(path_fs.c_str(), &full_tag_handler, tag);
 
-	return song->tag != NULL;
+	return tag != nullptr;
 }
 
 bool
-song_file_update_inarchive(struct song *song)
+Song::UpdateFileInArchive()
 {
 	const char *suffix;
 	const struct decoder_plugin *plugin;
 
-	assert(song_is_file(song));
+	assert(IsFile());
 
 	/* check if there's a suffix and a plugin */
 
-	suffix = uri_get_suffix(song->uri);
+	suffix = uri_get_suffix(uri);
 	if (suffix == NULL)
 		return false;
 
-	plugin = decoder_plugin_from_suffix(suffix, nullptr);
+	plugin = decoder_plugin_from_suffix(suffix, NULL);
 	if (plugin == NULL)
 		return false;
 
-	if (song->tag != NULL)
-		tag_free(song->tag);
+	delete tag;
 
 	//accept every file that has music suffix
 	//because we don't support tag reading through
 	//input streams
-	song->tag = tag_new();
+	tag = new Tag();
 
 	return true;
 }

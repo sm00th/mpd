@@ -19,10 +19,10 @@
 
 #include "config.h"
 #include "VorbisComments.hxx"
-#include "XiphTags.h"
-#include "tag.h"
-#include "tag_table.h"
-#include "tag_handler.h"
+#include "XiphTags.hxx"
+#include "tag/Tag.hxx"
+#include "tag/TagTable.hxx"
+#include "tag/TagHandler.hxx"
 #include "replay_gain_info.h"
 
 #include <glib.h>
@@ -135,14 +135,14 @@ vorbis_comments_scan(char **comments,
 
 }
 
-struct tag *
+Tag *
 vorbis_comments_to_tag(char **comments)
 {
-	struct tag *tag = tag_new();
+	Tag *tag = new Tag();
 	vorbis_comments_scan(comments, &add_tag_handler, tag);
 
-	if (tag_is_empty(tag)) {
-		tag_free(tag);
+	if (tag->IsEmpty()) {
+		delete tag;
 		tag = NULL;
 	}
 

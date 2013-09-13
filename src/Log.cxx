@@ -19,9 +19,16 @@
 
 #include "config.h"
 #include "Log.hxx"
-#include "conf.h"
-#include "fd_util.h"
-#include "mpd_error.h"
+#include "ConfigData.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
+#include "system/fd_util.h"
+#include "system/FatalError.hxx"
+#include "fs/Path.hxx"
+#include "fs/FileSystem.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
+#include "system/FatalError.hxx"
 
 #include <assert.h>
 #include <sys/types.h>
@@ -48,21 +55,23 @@
 #define LOG_DATE_BUF_SIZE 16
 #define LOG_DATE_LEN (LOG_DATE_BUF_SIZE - 1)
 
+static constexpr Domain log_domain("log");
+
 static GLogLevelFlags log_threshold = G_LOG_LEVEL_MESSAGE;
 
 static const char *log_charset;
 
 static bool stdout_mode = true;
 static int out_fd;
-static char *out_filename;
+static Path out_path = Path::Null();
 
 static void redirect_logs(int fd)
 {
 	assert(fd >= 0);
 	if (dup2(fd, STDOUT_FILENO) < 0)
-		MPD_ERROR("problems dup2 stdout : %s\n", strerror(errno));
+		FatalSystemError("Failed to dup2 stdout");
 	if (dup2(fd, STDERR_FILENO) < 0)
-		MPD_ERROR("problems dup2 stderr : %s\n", strerror(errno));
+		FatalSystemError("Failed to dup2 stderr");
 }
 
 static const char *log_date(void)
@@ -89,9 +98,9 @@ chomp_length(const char *p)
 }
 
 static void
-file_log_func(const gchar *log_domain,
+file_log_func(const gchar *domain,
 	      GLogLevelFlags log_level,
-	      const gchar *message, G_GNUC_UNUSED gpointer user_data)
+	      const gchar *message, gcc_unused gpointer user_data)
 {
 	char *converted;
 
@@ -107,12 +116,12 @@ file_log_func(const gchar *log_domain,
 	} else
 		converted = NULL;
 
-	if (log_domain == NULL)
-		log_domain = "";
+	if (domain == nullptr)
+		domain = "";
 
 	fprintf(stderr, "%s%s%s%.*s\n",
 		stdout_mode ? "" : log_date(),
-		log_domain, *log_domain == 0 ? "" : ": ",
+		domain, *domain == 0 ? "" : ": ",
 		chomp_length(message), message);
 
 	g_free(converted);
@@ -127,21 +136,21 @@ log_init_stdout(void)
 static int
 open_log_file(void)
 {
-	assert(out_filename != NULL);
+	assert(!out_path.IsNull());
 
-	return open_cloexec(out_filename, O_CREAT | O_WRONLY | O_APPEND, 0666);
+	return OpenFile(out_path, O_CREAT | O_WRONLY | O_APPEND, 0666);
 }
 
 static bool
-log_init_file(unsigned line, GError **error_r)
+log_init_file(unsigned line, Error &error)
 {
-	assert(out_filename != NULL);
+	assert(!out_path.IsNull());
 
 	out_fd = open_log_file();
 	if (out_fd < 0) {
-		g_set_error(error_r, log_quark(), errno,
-			    "failed to open log file \"%s\" (config line %u): %s",
-			    out_filename, line, g_strerror(errno));
+		const std::string out_path_utf8 = out_path.ToUTF8();
+		error.FormatErrno("failed to open log file \"%s\" (config line %u)",
+				  out_path_utf8.c_str(), line);
 		return false;
 	}
 
@@ -177,14 +186,14 @@ glib_to_syslog_level(GLogLevelFlags log_level)
 }
 
 static void
-syslog_log_func(const gchar *log_domain,
+syslog_log_func(const gchar *domain,
 		GLogLevelFlags log_level, const gchar *message,
-		G_GNUC_UNUSED gpointer user_data)
+		gcc_unused gpointer user_data)
 {
 	if (stdout_mode) {
 		/* fall back to the file log function during
 		   startup */
-		file_log_func(log_domain, log_level,
+		file_log_func(domain, log_level,
 			      message, user_data);
 		return;
 	}
@@ -192,18 +201,18 @@ syslog_log_func(const gchar *log_domain,
 	if (log_level > log_threshold)
 		return;
 
-	if (log_domain == NULL)
-		log_domain = "";
+	if (domain == nullptr)
+		domain = "";
 
 	syslog(glib_to_syslog_level(log_level), "%s%s%.*s",
-	       log_domain, *log_domain == 0 ? "" : ": ",
+	       domain, *domain == 0 ? "" : ": ",
 	       chomp_length(message), message);
 }
 
 static void
 log_init_syslog(void)
 {
-	assert(out_filename == NULL);
+	assert(out_path.IsNull());
 
 	openlog(PACKAGE, 0, LOG_DAEMON);
 	g_log_set_default_handler(syslog_log_func, NULL);
@@ -221,8 +230,8 @@ parse_log_level(const char *value, unsigned line)
 	else if (0 == strcmp(value, "verbose"))
 		return G_LOG_LEVEL_DEBUG;
 	else {
-		MPD_ERROR("unknown log level \"%s\" at line %u\n",
-			  value, line);
+		FormatFatalError("unknown log level \"%s\" at line %u",
+				 value, line);
 		return G_LOG_LEVEL_MESSAGE;
 	}
 }
@@ -237,7 +246,7 @@ log_early_init(bool verbose)
 }
 
 bool
-log_init(bool verbose, bool use_stdout, GError **error_r)
+log_init(bool verbose, bool use_stdout, Error &error)
 {
 	const struct config_param *param;
 
@@ -260,8 +269,8 @@ log_init(bool verbose, bool use_stdout, GError **error_r)
 			log_init_syslog();
 			return true;
 #else
-			g_set_error(error_r, log_quark(), 0,
-				    "config parameter 'log_file' not found");
+			error.Set(log_domain,
+				  "config parameter 'log_file' not found");
 			return false;
 #endif
 #ifdef HAVE_SYSLOG
@@ -270,9 +279,9 @@ log_init(bool verbose, bool use_stdout, GError **error_r)
 			return true;
 #endif
 		} else {
-			out_filename = config_dup_path(CONF_LOG_FILE, error_r);
-			return out_filename != NULL &&
-				log_init_file(param->line, error_r);
+			out_path = config_get_path(CONF_LOG_FILE, error);
+			return !out_path.IsNull() &&
+				log_init_file(param->line, error);
 		}
 	}
 }
@@ -284,7 +293,7 @@ close_log_files(void)
 		return;
 
 #ifdef HAVE_SYSLOG
-	if (out_filename == NULL)
+	if (out_path.IsNull())
 		closelog();
 #endif
 }
@@ -293,7 +302,7 @@ void
 log_deinit(void)
 {
 	close_log_files();
-	g_free(out_filename);
+	out_path = Path::Null();
 }
 
 
@@ -302,7 +311,7 @@ void setup_log_output(bool use_stdout)
 	fflush(NULL);
 	if (!use_stdout) {
 #ifndef WIN32
-		if (out_filename == NULL)
+		if (out_path.IsNull())
 			out_fd = open("/dev/null", O_WRONLY);
 #endif
 
@@ -320,16 +329,19 @@ int cycle_log_files(void)
 {
 	int fd;
 
-	if (stdout_mode || out_filename == NULL)
+	if (stdout_mode || out_path.IsNull())
 		return 0;
-	assert(out_filename);
+
+	assert(!out_path.IsNull());
 
 	g_debug("Cycling log files...\n");
 	close_log_files();
 
 	fd = open_log_file();
 	if (fd < 0) {
-		g_warning("error re-opening log file: %s\n", out_filename);
+		const std::string out_path_utf8 = out_path.ToUTF8();
+		g_warning("error re-opening log file: %s",
+			  out_path_utf8.c_str());
 		return -1;
 	}
 

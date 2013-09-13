@@ -19,8 +19,10 @@
 
 #include "config.h"
 #include "fs/Path.hxx"
-#include "conf.h"
-#include "mpd_error.h"
+#include "ConfigGlobal.hxx"
+#include "system/FatalError.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 #include "gcc.h"
 
 #include <glib.h>
@@ -45,6 +47,8 @@
  * sequences with single byte.
  */
 #define MPD_PATH_MAX_UTF8 ((MPD_PATH_MAX - 1) * 4 + 1)
+
+const Domain path_domain("path");
 
 std::string fs_charset;
 
@@ -86,6 +90,18 @@ Path Path::FromUTF8(const char *path_utf8)
 	return Path(Donate(), p);
 }
 
+Path
+Path::FromUTF8(const char *path_utf8, Error &error)
+{
+	Path path = FromUTF8(path_utf8);
+	if (path.IsNull())
+		error.Format(path_domain,
+			     "Failed to convert to file system charset: %s",
+			     path_utf8);
+
+	return path;
+}
+
 gcc_pure
 static bool
 IsSupportedCharset(const char *charset)
@@ -105,7 +121,7 @@ SetFSCharset(const char *charset)
 	assert(charset != NULL);
 
 	if (!IsSupportedCharset(charset))
-		MPD_ERROR("invalid filesystem charset: %s", charset);
+		FormatFatalError("invalid filesystem charset: %s", charset);
 
 	fs_charset = charset;
 

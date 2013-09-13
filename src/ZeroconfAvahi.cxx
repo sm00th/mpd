@@ -22,7 +22,7 @@
 #include "ZeroconfInternal.hxx"
 #include "Listen.hxx"
 #include "event/Loop.hxx"
-#include "mpd_error.h"
+#include "system/FatalError.hxx"
 
 #include <glib.h>
 
@@ -41,7 +41,9 @@
 
 static char *avahiName;
 static int avahiRunning;
+#ifndef USE_EPOLL
 static AvahiGLibPoll *avahi_glib_poll;
+#endif
 static const AvahiPoll *avahi_poll;
 static AvahiClient *avahiClient;
 static AvahiEntryGroup *avahiGroup;
@@ -51,7 +53,7 @@ static void avahiRegisterService(AvahiClient * c);
 /* Callback when the EntryGroup changes state */
 static void avahiGroupCallback(AvahiEntryGroup * g,
 			       AvahiEntryGroupState state,
-			       G_GNUC_UNUSED void *userdata)
+			       gcc_unused void *userdata)
 {
 	char *n;
 	assert(g);
@@ -142,7 +144,7 @@ fail:
 
 /* Callback when avahi changes state */
 static void avahiClientCallback(AvahiClient * c, AvahiClientState state,
-				G_GNUC_UNUSED void *userdata)
+				gcc_unused void *userdata)
 {
 	int reason;
 	assert(c);
@@ -223,15 +225,21 @@ AvahiInit(EventLoop &loop, const char *serviceName)
 	g_debug("Initializing interface");
 
 	if (!avahi_is_valid_service_name(serviceName))
-		MPD_ERROR("Invalid zeroconf_name \"%s\"", serviceName);
+		FormatFatalError("Invalid zeroconf_name \"%s\"", serviceName);
 
 	avahiName = avahi_strdup(serviceName);
 
 	avahiRunning = 1;
 
+#ifdef USE_EPOLL
+	// TODO
+	(void)loop;
+	if (1==1) return;
+#else
 	avahi_glib_poll = avahi_glib_poll_new(loop.GetContext(),
 					      G_PRIORITY_DEFAULT);
 	avahi_poll = avahi_glib_poll_get(avahi_glib_poll);
+#endif
 
 	avahiClient = avahi_client_new(avahi_poll, AVAHI_CLIENT_NO_FAIL,
 				       avahiClientCallback, NULL, &error);
@@ -258,10 +266,14 @@ AvahiDeinit(void)
 		avahiClient = NULL;
 	}
 
+#ifdef USE_EPOLL
+	// TODO
+#else
 	if (avahi_glib_poll != NULL) {
 		avahi_glib_poll_free(avahi_glib_poll);
 		avahi_glib_poll = NULL;
 	}
+#endif
 
 	avahi_free(avahiName);
 	avahiName = NULL;

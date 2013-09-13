@@ -22,11 +22,10 @@
 #include "InputInternal.hxx"
 #include "InputStream.hxx"
 #include "InputPlugin.hxx"
-#include "tag.h"
-
-#include <glib.h>
+#include "tag/Tag.hxx"
 
 #include <assert.h>
+#include <string.h>
 #include <stdio.h>
 
 #undef G_LOG_DOMAIN
@@ -67,7 +66,7 @@ struct RewindInputStream {
 	}
 
 	~RewindInputStream() {
-		input_stream_close(input);
+		input->Close();
 	}
 
 	/**
@@ -111,11 +110,11 @@ input_rewind_close(struct input_stream *is)
 }
 
 static bool
-input_rewind_check(struct input_stream *is, GError **error_r)
+input_rewind_check(struct input_stream *is, Error &error)
 {
 	RewindInputStream *r = (RewindInputStream *)is;
 
-	return input_stream_check(r->input, error_r);
+	return r->input->Check(error);
 }
 
 static void
@@ -127,12 +126,12 @@ input_rewind_update(struct input_stream *is)
 		r->CopyAttributes();
 }
 
-static struct tag *
+static Tag *
 input_rewind_tag(struct input_stream *is)
 {
 	RewindInputStream *r = (RewindInputStream *)is;
 
-	return input_stream_tag(r->input);
+	return r->input->ReadTag();
 }
 
 static bool
@@ -140,12 +139,12 @@ input_rewind_available(struct input_stream *is)
 {
 	RewindInputStream *r = (RewindInputStream *)is;
 
-	return input_stream_available(r->input);
+	return r->input->IsAvailable();
 }
 
 static size_t
 input_rewind_read(struct input_stream *is, void *ptr, size_t size,
-		  GError **error_r)
+		  Error &error)
 {
 	RewindInputStream *r = (RewindInputStream *)is;
 
@@ -166,7 +165,7 @@ input_rewind_read(struct input_stream *is, void *ptr, size_t size,
 	} else {
 		/* pass method call to underlying stream */
 
-		size_t nbytes = input_stream_read(r->input, ptr, size, error_r);
+		size_t nbytes = r->input->Read(ptr, size, error);
 
 		if (r->input->offset > (goffset)sizeof(r->buffer))
 			/* disable buffering */
@@ -191,12 +190,12 @@ input_rewind_eof(struct input_stream *is)
 {
 	RewindInputStream *r = (RewindInputStream *)is;
 
-	return !r->ReadingFromBuffer() && input_stream_eof(r->input);
+	return !r->ReadingFromBuffer() && r->input->IsEOF();
 }
 
 static bool
 input_rewind_seek(struct input_stream *is, goffset offset, int whence,
-		  GError **error_r)
+		  Error &error)
 {
 	RewindInputStream *r = (RewindInputStream *)is;
 
@@ -214,8 +213,7 @@ input_rewind_seek(struct input_stream *is, goffset offset, int whence,
 
 		return true;
 	} else {
-		bool success = input_stream_seek(r->input, offset, whence,
-						 error_r);
+		bool success = r->input->Seek(offset, whence, error);
 		r->CopyAttributes();
 
 		/* disable the buffer, because r->input has left the

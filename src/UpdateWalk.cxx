@@ -26,18 +26,17 @@
 #include "DatabaseLock.hxx"
 #include "DatabaseSimple.hxx"
 #include "Directory.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "PlaylistVector.hxx"
 #include "PlaylistRegistry.hxx"
 #include "Mapper.hxx"
 #include "ExcludeList.hxx"
-#include "conf.h"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
 #include "fs/Path.hxx"
 #include "fs/FileSystem.hxx"
-
-extern "C" {
-#include "uri.h"
-}
+#include "fs/DirectoryReader.hxx"
+#include "util/UriUtil.hxx"
 
 #include <glib.h>
 
@@ -105,18 +104,18 @@ remove_excluded_from_directory(Directory *directory,
 	directory_for_each_child_safe(child, n, directory) {
 		const Path name_fs = Path::FromUTF8(child->GetName());
 
-		if (name_fs.IsNull() || exclude_list.Check(name_fs.c_str())) {
+		if (name_fs.IsNull() || exclude_list.Check(name_fs)) {
 			delete_directory(child);
 			modified = true;
 		}
 	}
 
-	struct song *song, *ns;
+	Song *song, *ns;
 	directory_for_each_song_safe(song, ns, directory) {
 		assert(song->parent == directory);
 
 		const Path name_fs = Path::FromUTF8(song->uri);
-		if (name_fs.IsNull() || exclude_list.Check(name_fs.c_str())) {
+		if (name_fs.IsNull() || exclude_list.Check(name_fs)) {
 			delete_song(directory, song);
 			modified = true;
 		}
@@ -140,7 +139,7 @@ purge_deleted_from_directory(Directory *directory)
 		modified = true;
 	}
 
-	struct song *song, *ns;
+	Song *song, *ns;
 	directory_for_each_song_safe(song, ns, directory) {
 		const Path path = map_song_fs(song);
 		if (path.IsNull() || !FileExists(path)) {
@@ -263,15 +262,16 @@ update_directory_child(Directory *directory,
 }
 
 /* we don't look at "." / ".." nor files with newlines in their name */
-G_GNUC_PURE
-static bool skip_path(const char *path)
+gcc_pure
+static bool skip_path(const Path &path_fs)
 {
+	const char *path = path_fs.c_str();
 	return (path[0] == '.' && path[1] == 0) ||
 		(path[0] == '.' && path[1] == '.' && path[2] == 0) ||
 		strchr(path, '\n') != NULL;
 }
 
-G_GNUC_PURE
+gcc_pure
 static bool
 skip_symlink(const Directory *directory, const char *utf8_name)
 {
@@ -280,19 +280,10 @@ skip_symlink(const Directory *directory, const char *utf8_name)
 	if (path_fs.IsNull())
 		return true;
 
-	char buffer[MPD_PATH_MAX];
-	ssize_t length = readlink(path_fs.c_str(), buffer, sizeof(buffer));
-	if (length < 0)
+	const Path target = ReadLink(path_fs);
+	if (target.IsNull())
 		/* don't skip if this is not a symlink */
 		return errno != EINVAL;
-
-	if ((size_t)length >= sizeof(buffer))
-		/* skip symlinks when the buffer is too small for the
-		   link target */
-		return true;
-
-	/* null-terminate the buffer, because readlink() will not */
-	buffer[length] = 0;
 
 	if (!follow_inside_symlinks && !follow_outside_symlinks) {
 		/* ignore all symlinks */
@@ -302,16 +293,18 @@ skip_symlink(const Directory *directory, const char *utf8_name)
 		return false;
 	}
 
-	if (g_path_is_absolute(buffer)) {
+	const char *target_str = target.c_str();
+
+	if (g_path_is_absolute(target_str)) {
 		/* if the symlink points to an absolute path, see if
 		   that path is inside the music directory */
-		const char *relative = map_to_relative_path(buffer);
-		return relative > buffer
+		const char *relative = map_to_relative_path(target_str);
+		return relative > target_str
 			? !follow_inside_symlinks
 			: !follow_outside_symlinks;
 	}
 
-	const char *p = buffer;
+	const char *p = target_str;
 	while (*p == '.') {
 		if (p[1] == '.' && G_IS_DIR_SEPARATOR(p[2])) {
 			/* "../" moves to parent directory */
@@ -355,10 +348,12 @@ update_directory(Directory *directory, const struct stat *st)
 	if (path_fs.IsNull())
 		return false;
 
-	DIR *dir = opendir(path_fs.c_str());
-	if (!dir) {
+	DirectoryReader reader(path_fs);
+	if (reader.HasFailed()) {
+		int error = errno;
+		const auto path_utf8 = path_fs.ToUTF8();
 		g_warning("Failed to open directory %s: %s",
-			  path_fs.c_str(), g_strerror(errno));
+			  path_utf8.c_str(), g_strerror(error));
 		return false;
 	}
 
@@ -370,15 +365,16 @@ update_directory(Directory *directory, const struct stat *st)
 
 	purge_deleted_from_directory(directory);
 
-	struct dirent *ent;
-	while ((ent = readdir(dir))) {
+	while (reader.ReadEntry()) {
 		std::string utf8;
 		struct stat st2;
 
-		if (skip_path(ent->d_name) || exclude_list.Check(ent->d_name))
+		const Path entry = reader.GetEntry();
+
+		if (skip_path(entry) || exclude_list.Check(entry))
 			continue;
 
-		utf8 = Path::ToUTF8(ent->d_name);
+		utf8 = entry.ToUTF8();
 		if (utf8.empty())
 			continue;
 
@@ -392,8 +388,6 @@ update_directory(Directory *directory, const struct stat *st)
 		else
 			modified |= delete_name_in(directory, utf8.c_str());
 	}
-
-	closedir(dir);
 
 	directory->mtime = st->st_mtime;
 
@@ -421,7 +415,7 @@ directory_make_child_checked(Directory *parent, const char *name_utf8)
 	/* if we're adding directory paths, make sure to delete filenames
 	   with potentially the same name */
 	db_lock();
-	struct song *conflicting = parent->FindSong(name_utf8);
+	Song *conflicting = parent->FindSong(name_utf8);
 	if (conflicting)
 		delete_song(parent, conflicting);
 

@@ -19,12 +19,10 @@
 
 #include "config.h"
 #include "AdPlugDecoderPlugin.h"
-#include "tag_handler.h"
-#include "decoder_api.h"
-
-extern "C" {
-#include "audio_check.h"
-}
+#include "tag/TagHandler.hxx"
+#include "DecoderAPI.hxx"
+#include "CheckAudioFormat.hxx"
+#include "util/Error.hxx"
 
 #include <adplug/adplug.h>
 #include <adplug/emuopl.h>
@@ -39,14 +37,13 @@ extern "C" {
 static unsigned sample_rate;
 
 static bool
-adplug_init(const struct config_param *param)
+adplug_init(const config_param &param)
 {
-	GError *error = NULL;
+	Error error;
 
-	sample_rate = config_get_block_unsigned(param, "sample_rate", 48000);
-	if (!audio_check_sample_rate(sample_rate, &error)) {
-		g_warning("%s\n", error->message);
-		g_error_free(error);
+	sample_rate = param.GetBlockValue("sample_rate", 48000u);
+	if (!audio_check_sample_rate(sample_rate, error)) {
+		g_warning("%s", error.GetMessage());
 		return false;
 	}
 
@@ -63,11 +60,10 @@ adplug_file_decode(struct decoder *decoder, const char *path_fs)
 	if (player == nullptr)
 		return;
 
-	struct audio_format audio_format;
-	audio_format_init(&audio_format, sample_rate, SAMPLE_FORMAT_S16, 2);
-	assert(audio_format_valid(&audio_format));
+	const AudioFormat audio_format(sample_rate, SampleFormat::S16, 2);
+	assert(audio_format.IsValid());
 
-	decoder_initialized(decoder, &audio_format, false,
+	decoder_initialized(decoder, audio_format, false,
 		player->songlength() / 1000.);
 
 	int16_t buffer[2048];

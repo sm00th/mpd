@@ -20,15 +20,17 @@
 #ifndef MPD_PLAYER_H
 #define MPD_PLAYER_H
 
-#include "audio_format.h"
+#include "AudioFormat.hxx"
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
 #include <stdint.h>
 
 struct decoder_control;
+struct Song;
 
 enum player_state {
 	PLAYER_STATE_STOP = 0,
@@ -84,7 +86,7 @@ enum player_error {
 struct player_status {
 	enum player_state state;
 	uint16_t bit_rate;
-	struct audio_format audio_format;
+	AudioFormat audio_format;
 	float total_time;
 	float elapsed_time;
 };
@@ -126,10 +128,10 @@ struct player_control {
 	 * #PLAYER_ERROR_NONE.  The object must be freed when this
 	 * object transitions back to #PLAYER_ERROR_NONE.
 	 */
-	GError *error;
+	Error error;
 
 	uint16_t bit_rate;
-	struct audio_format audio_format;
+	AudioFormat audio_format;
 	float total_time;
 	float elapsed_time;
 
@@ -139,7 +141,7 @@ struct player_control {
 	 * This is a duplicate, and must be freed when this attribute
 	 * is cleared.
 	 */
-	struct song *next_song;
+	Song *next_song;
 
 	double seek_where;
 	float cross_fade_seconds;
@@ -230,7 +232,7 @@ struct player_control {
 	 * @param song the song to be queued; the given instance will
 	 * be owned and freed by the player
 	 */
-	void Play(struct song *song);
+	void Play(Song *song);
 
 	/**
 	 * see PLAYER_COMMAND_CANCEL
@@ -261,10 +263,9 @@ struct player_control {
 	 * Caller must lock the object.
 	 *
 	 * @param type the error type; must not be #PLAYER_ERROR_NONE
-	 * @param error detailed error information; must not be NULL; the
-	 * #player_control takes over ownership of this #GError instance
+	 * @param error detailed error information; must be defined.
 	 */
-	void SetError(player_error type, GError *error);
+	void SetError(player_error type, Error &&error);
 
 	void ClearError();
 
@@ -287,7 +288,7 @@ struct player_control {
 	 * @param song the song to be queued; the given instance will be owned
 	 * and freed by the player
 	 */
-	void EnqueueSong(struct song *song);
+	void EnqueueSong(Song *song);
 
 	/**
 	 * Makes the player thread seek the specified song to a position.
@@ -297,7 +298,7 @@ struct player_control {
 	 * @return true on success, false on failure (e.g. if MPD isn't
 	 * playing currently)
 	 */
-	bool Seek(struct song *song, float seek_time);
+	bool Seek(Song *song, float seek_time);
 
 	void SetCrossFade(float cross_fade_seconds);
 

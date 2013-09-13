@@ -19,19 +19,18 @@
 
 #include "config.h"
 #include "OutputAll.hxx"
-
-extern "C" {
-#include "output_internal.h"
-}
-
 #include "PlayerControl.hxx"
+#include "OutputInternal.hxx"
 #include "OutputControl.hxx"
 #include "OutputError.hxx"
 #include "MusicBuffer.hxx"
 #include "MusicPipe.hxx"
 #include "MusicChunk.hxx"
-#include "mpd_error.h"
-#include "conf.h"
+#include "system/FatalError.hxx"
+#include "util/Error.hxx"
+#include "ConfigData.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
 #include "notify.hxx"
 
 #include <assert.h>
@@ -40,7 +39,7 @@ extern "C" {
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "output"
 
-static struct audio_format input_audio_format;
+static AudioFormat input_audio_format;
 
 static struct audio_output **audio_outputs;
 static unsigned int num_audio_outputs;
@@ -108,27 +107,35 @@ audio_output_all_init(struct player_control *pc)
 {
 	const struct config_param *param = NULL;
 	unsigned int i;
-	GError *error = NULL;
+	Error error;
 
 	num_audio_outputs = audio_output_config_count();
 	audio_outputs = g_new(struct audio_output *, num_audio_outputs);
+
+	const config_param empty;
 
 	for (i = 0; i < num_audio_outputs; i++)
 	{
 		unsigned int j;
 
 		param = config_get_next_param(CONF_AUDIO_OUTPUT, param);
+		if (param == nullptr) {
+			/* only allow param to be nullptr if there
+			   just one audio output */
+			assert(i == 0);
+			assert(num_audio_outputs == 1);
 
-		/* only allow param to be NULL if there just one audioOutput */
-		assert(param || (num_audio_outputs == 1));
+			param = &empty;
+		}
 
-		struct audio_output *output = audio_output_new(param, pc, &error);
+		audio_output *output = audio_output_new(*param, pc, error);
 		if (output == NULL) {
 			if (param != NULL)
-				MPD_ERROR("line %i: %s",
-					  param->line, error->message);
+				FormatFatalError("line %i: %s",
+						 param->line,
+						 error.GetMessage());
 			else
-				MPD_ERROR("%s", error->message);
+				FatalError(error);
 		}
 
 		audio_outputs[i] = output;
@@ -136,8 +143,8 @@ audio_output_all_init(struct player_control *pc)
 		/* require output names to be unique: */
 		for (j = 0; j < i; j++) {
 			if (!strcmp(output->name, audio_outputs[j]->name)) {
-				MPD_ERROR("output devices with identical "
-					  "names: %s\n", output->name);
+				FormatFatalError("output devices with identical "
+						 "names: %s", output->name);
 			}
 		}
 	}
@@ -165,9 +172,9 @@ audio_output_all_enable_disable(void)
 		struct audio_output *ao = audio_outputs[i];
 		bool enabled;
 
-		g_mutex_lock(ao->mutex);
+		ao->mutex.lock();
 		enabled = ao->really_enabled;
-		g_mutex_unlock(ao->mutex);
+		ao->mutex.unlock();
 
 		if (ao->enabled != enabled) {
 			if (ao->enabled)
@@ -187,14 +194,10 @@ audio_output_all_finished(void)
 {
 	for (unsigned i = 0; i < num_audio_outputs; ++i) {
 		struct audio_output *ao = audio_outputs[i];
-		bool not_finished;
 
-		g_mutex_lock(ao->mutex);
-		not_finished = audio_output_is_open(ao) &&
-			!audio_output_command_is_finished(ao);
-		g_mutex_unlock(ao->mutex);
-
-		if (not_finished)
+		const ScopeLock protect(ao->mutex);
+		if (audio_output_is_open(ao) &&
+		    !audio_output_command_is_finished(ao))
 			return false;
 	}
 
@@ -220,14 +223,12 @@ audio_output_allow_play_all(void)
 static void
 audio_output_reset_reopen(struct audio_output *ao)
 {
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
 
 	if (!ao->open && ao->fail_timer != NULL) {
 		g_timer_destroy(ao->fail_timer);
 		ao->fail_timer = NULL;
 	}
-
-	g_mutex_unlock(ao->mutex);
 }
 
 /**
@@ -256,12 +257,12 @@ audio_output_all_update(void)
 	unsigned int i;
 	bool ret = false;
 
-	if (!audio_format_defined(&input_audio_format))
+	if (!input_audio_format.IsDefined())
 		return false;
 
 	for (i = 0; i < num_audio_outputs; ++i)
 		ret = audio_output_update(audio_outputs[i],
-					  &input_audio_format, g_mp) || ret;
+					  input_audio_format, g_mp) || ret;
 
 	return ret;
 }
@@ -274,7 +275,7 @@ audio_output_all_set_replay_gain_mode(enum replay_gain_mode mode)
 }
 
 bool
-audio_output_all_play(struct music_chunk *chunk, GError **error_r)
+audio_output_all_play(struct music_chunk *chunk, Error &error)
 {
 	bool ret;
 	unsigned int i;
@@ -287,8 +288,7 @@ audio_output_all_play(struct music_chunk *chunk, GError **error_r)
 	ret = audio_output_all_update();
 	if (!ret) {
 		/* TODO: obtain real error */
-		g_set_error(error_r, output_quark(), 0,
-			    "Failed to open audio output");
+		error.Set(output_domain, "Failed to open audio output");
 		return false;
 	}
 
@@ -301,14 +301,13 @@ audio_output_all_play(struct music_chunk *chunk, GError **error_r)
 }
 
 bool
-audio_output_all_open(const struct audio_format *audio_format,
+audio_output_all_open(const AudioFormat audio_format,
 		      struct music_buffer *buffer,
-		      GError **error_r)
+		      Error &error)
 {
 	bool ret = false, enabled = false;
 	unsigned int i;
 
-	assert(audio_format != NULL);
 	assert(buffer != NULL);
 	assert(g_music_buffer == NULL || g_music_buffer == buffer);
 	assert((g_mp == NULL) == (g_music_buffer == NULL));
@@ -325,10 +324,9 @@ audio_output_all_open(const struct audio_format *audio_format,
 		/* if the pipe hasn't been cleared, the the audio
 		   format must not have changed */
 		assert(music_pipe_empty(g_mp) ||
-		       audio_format_equals(audio_format,
-					   &input_audio_format));
+		       audio_format == input_audio_format);
 
-	input_audio_format = *audio_format;
+	input_audio_format = audio_format;
 
 	audio_output_all_reset_reopen();
 	audio_output_all_enable_disable();
@@ -343,12 +341,10 @@ audio_output_all_open(const struct audio_format *audio_format,
 	}
 
 	if (!enabled)
-		g_set_error(error_r, output_quark(), 0,
-			    "All audio outputs are disabled");
+		error.Set(output_domain, "All audio outputs are disabled");
 	else if (!ret)
 		/* TODO: obtain real error */
-		g_set_error(error_r, output_quark(), 0,
-			    "Failed to open audio output");
+		error.Set(output_domain, "Failed to open audio output");
 
 	if (!ret)
 		/* close all devices if there was an error */
@@ -387,14 +383,10 @@ static bool
 chunk_is_consumed(const struct music_chunk *chunk)
 {
 	for (unsigned i = 0; i < num_audio_outputs; ++i) {
-		const struct audio_output *ao = audio_outputs[i];
-		bool consumed;
+		struct audio_output *ao = audio_outputs[i];
 
-		g_mutex_lock(ao->mutex);
-		consumed = chunk_is_consumed_in(ao, chunk);
-		g_mutex_unlock(ao->mutex);
-
-		if (!consumed)
+		const ScopeLock protect(ao->mutex);
+		if (!chunk_is_consumed_in(ao, chunk))
 			return false;
 	}
 
@@ -406,7 +398,7 @@ chunk_is_consumed(const struct music_chunk *chunk)
  * outputs have consumed it already.  Clear the reference.
  */
 static void
-clear_tail_chunk(G_GNUC_UNUSED const struct music_chunk *chunk, bool *locked)
+clear_tail_chunk(gcc_unused const struct music_chunk *chunk, bool *locked)
 {
 	assert(chunk->next == NULL);
 	assert(music_pipe_contains(g_mp, chunk));
@@ -416,11 +408,11 @@ clear_tail_chunk(G_GNUC_UNUSED const struct music_chunk *chunk, bool *locked)
 
 		/* this mutex will be unlocked by the caller when it's
 		   ready */
-		g_mutex_lock(ao->mutex);
+		ao->mutex.lock();
 		locked[i] = ao->open;
 
 		if (!locked[i]) {
-			g_mutex_unlock(ao->mutex);
+			ao->mutex.unlock();
 			continue;
 		}
 
@@ -469,7 +461,7 @@ audio_output_all_check(void)
 			   by clear_tail_chunk() */
 			for (unsigned i = 0; i < num_audio_outputs; ++i)
 				if (locked[i])
-					g_mutex_unlock(audio_outputs[i]->mutex);
+					audio_outputs[i]->mutex.unlock();
 
 		/* return the chunk to the buffer */
 		music_buffer_return(g_music_buffer, shifted);
@@ -561,7 +553,7 @@ audio_output_all_close(void)
 
 	g_music_buffer = NULL;
 
-	audio_format_clear(&input_audio_format);
+	input_audio_format.Clear();
 
 	audio_output_all_elapsed_time = -1.0;
 }
@@ -584,7 +576,7 @@ audio_output_all_release(void)
 
 	g_music_buffer = NULL;
 
-	audio_format_clear(&input_audio_format);
+	input_audio_format.Clear();
 
 	audio_output_all_elapsed_time = -1.0;
 }

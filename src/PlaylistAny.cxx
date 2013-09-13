@@ -21,42 +21,37 @@
 #include "PlaylistAny.hxx"
 #include "PlaylistMapper.hxx"
 #include "PlaylistRegistry.hxx"
-#include "input_stream.h"
-
-extern "C" {
-#include "uri.h"
-}
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
+#include "InputStream.hxx"
 
 #include <assert.h>
 
-static struct playlist_provider *
+static SongEnumerator *
 playlist_open_remote(const char *uri, Mutex &mutex, Cond &cond,
 		     struct input_stream **is_r)
 {
 	assert(uri_has_scheme(uri));
 
-	struct playlist_provider *playlist =
-		playlist_list_open_uri(uri, mutex, cond);
+	SongEnumerator *playlist = playlist_list_open_uri(uri, mutex, cond);
 	if (playlist != NULL) {
 		*is_r = NULL;
 		return playlist;
 	}
 
-	GError *error = NULL;
-	struct input_stream *is = input_stream_open(uri, mutex, cond, &error);
+	Error error;
+	input_stream *is = input_stream::Open(uri, mutex, cond, error);
 	if (is == NULL) {
-		if (error != NULL) {
+		if (error.IsDefined())
 			g_warning("Failed to open %s: %s",
-				  uri, error->message);
-			g_error_free(error);
-		}
+				  uri, error.GetMessage());
 
 		return NULL;
 	}
 
 	playlist = playlist_list_open_stream(is, uri);
 	if (playlist == NULL) {
-		input_stream_close(is);
+		is->Close();
 		return NULL;
 	}
 
@@ -64,7 +59,7 @@ playlist_open_remote(const char *uri, Mutex &mutex, Cond &cond,
 	return playlist;
 }
 
-struct playlist_provider *
+SongEnumerator *
 playlist_open_any(const char *uri, Mutex &mutex, Cond &cond,
 		  struct input_stream **is_r)
 {

@@ -19,14 +19,13 @@
 
 #include "config.h"
 #include "MixerAll.hxx"
+#include "MixerControl.hxx"
+#include "MixerInternal.hxx"
+#include "MixerList.hxx"
 #include "OutputAll.hxx"
-#include "PcmVolume.hxx"
-
-extern "C" {
-#include "mixer_control.h"
-#include "output_internal.h"
-#include "mixer_api.h"
-}
+#include "pcm/PcmVolume.hxx"
+#include "OutputInternal.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
@@ -39,9 +38,7 @@ static int
 output_mixer_get_volume(unsigned i)
 {
 	struct audio_output *output;
-	struct mixer *mixer;
 	int volume;
-	GError *error = NULL;
 
 	assert(i < audio_output_count());
 
@@ -49,16 +46,15 @@ output_mixer_get_volume(unsigned i)
 	if (!output->enabled)
 		return -1;
 
-	mixer = output->mixer;
+	Mixer *mixer = output->mixer;
 	if (mixer == NULL)
 		return -1;
 
-	volume = mixer_get_volume(mixer, &error);
-	if (volume < 0 && error != NULL) {
+	Error error;
+	volume = mixer_get_volume(mixer, error);
+	if (volume < 0 && error.IsDefined())
 		g_warning("Failed to read mixer for '%s': %s",
-			  output->name, error->message);
-		g_error_free(error);
-	}
+			  output->name, error.GetMessage());
 
 	return volume;
 }
@@ -87,9 +83,7 @@ static bool
 output_mixer_set_volume(unsigned i, unsigned volume)
 {
 	struct audio_output *output;
-	struct mixer *mixer;
 	bool success;
-	GError *error = NULL;
 
 	assert(i < audio_output_count());
 	assert(volume <= 100);
@@ -98,16 +92,15 @@ output_mixer_set_volume(unsigned i, unsigned volume)
 	if (!output->enabled)
 		return false;
 
-	mixer = output->mixer;
+	Mixer *mixer = output->mixer;
 	if (mixer == NULL)
 		return false;
 
-	success = mixer_set_volume(mixer, volume, &error);
-	if (!success && error != NULL) {
+	Error error;
+	success = mixer_set_volume(mixer, volume, error);
+	if (!success && error.IsDefined())
 		g_warning("Failed to set mixer for '%s': %s",
-			  output->name, error->message);
-		g_error_free(error);
-	}
+			  output->name, error.GetMessage());
 
 	return success;
 }
@@ -131,7 +124,6 @@ static int
 output_mixer_get_software_volume(unsigned i)
 {
 	struct audio_output *output;
-	struct mixer *mixer;
 
 	assert(i < audio_output_count());
 
@@ -139,11 +131,11 @@ output_mixer_get_software_volume(unsigned i)
 	if (!output->enabled)
 		return -1;
 
-	mixer = output->mixer;
-	if (mixer == NULL || mixer->plugin != &software_mixer_plugin)
+	Mixer *mixer = output->mixer;
+	if (mixer == NULL || !mixer->IsPlugin(software_mixer_plugin))
 		return -1;
 
-	return mixer_get_volume(mixer, NULL);
+	return mixer_get_volume(mixer, IgnoreError());
 }
 
 int
@@ -177,6 +169,6 @@ mixer_all_set_software_volume(unsigned volume)
 		struct audio_output *output = audio_output_get(i);
 		if (output->mixer != NULL &&
 		    output->mixer->plugin == &software_mixer_plugin)
-			mixer_set_volume(output->mixer, volume, NULL);
+			mixer_set_volume(output->mixer, volume, IgnoreError());
 	}
 }

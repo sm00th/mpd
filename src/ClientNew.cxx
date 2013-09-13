@@ -21,12 +21,11 @@
 #include "ClientInternal.hxx"
 #include "ClientList.hxx"
 #include "Partition.hxx"
-#include "Main.hxx"
-#include "fd_util.h"
-extern "C" {
-#include "resolver.h"
-}
+#include "Instance.hxx"
+#include "system/fd_util.h"
+#include "system/Resolver.hxx"
 #include "Permission.hxx"
+#include "util/Error.hxx"
 
 #include <assert.h>
 #include <sys/types.h>
@@ -72,7 +71,8 @@ client_new(EventLoop &loop, Partition &partition,
 
 #ifdef HAVE_LIBWRAP
 	if (sa->sa_family != AF_UNIX) {
-		char *hostaddr = sockaddr_to_string(sa, sa_length, NULL);
+		char *hostaddr = sockaddr_to_string(sa, sa_length,
+						    IgnoreError());
 		const char *progname = g_get_prgname();
 
 		struct request_info req;
@@ -95,7 +95,8 @@ client_new(EventLoop &loop, Partition &partition,
 	}
 #endif	/* HAVE_WRAP */
 
-	if (client_list->IsFull()) {
+	ClientList &client_list = *partition.instance.client_list;
+	if (client_list.IsFull()) {
 		g_warning("Max Connections Reached!");
 		close_socket(fd);
 		return;
@@ -106,9 +107,9 @@ client_new(EventLoop &loop, Partition &partition,
 
 	(void)send(fd, GREETING, sizeof(GREETING) - 1, 0);
 
-	client_list->Add(*client);
+	client_list.Add(*client);
 
-	remote = sockaddr_to_string(sa, sa_length, NULL);
+	remote = sockaddr_to_string(sa, sa_length, IgnoreError());
 	g_log(G_LOG_DOMAIN, LOG_LEVEL_SECURE,
 	      "[%u] opened from %s", client->num, remote);
 	g_free(remote);
@@ -117,7 +118,7 @@ client_new(EventLoop &loop, Partition &partition,
 void
 Client::Close()
 {
-	client_list->Remove(*this);
+	partition.instance.client_list->Remove(*this);
 
 	SetExpired();
 

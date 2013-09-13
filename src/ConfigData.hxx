@@ -21,18 +21,14 @@
 #define MPD_CONFIG_DATA_HXX
 
 #include "ConfigOption.hxx"
-#include "gerror.h"
 #include "gcc.h"
 
-#ifdef __cplusplus
 #include <string>
 #include <array>
 #include <vector>
-#endif
 
-#include <stdbool.h>
-
-#ifdef __cplusplus
+class Path;
+class Error;
 
 struct block_param {
 	std::string name;
@@ -48,9 +44,13 @@ struct block_param {
 	gcc_nonnull_all
 	block_param(const char *_name, const char *_value, int _line=-1)
 		:name(_name), value(_value), line(_line), used(false) {}
-};
 
-#endif
+	gcc_pure
+	unsigned GetUnsignedValue() const;
+
+	gcc_pure
+	bool GetBoolValue() const;
+};
 
 struct config_param {
 	/**
@@ -62,7 +62,6 @@ struct config_param {
 	char *value;
 	unsigned int line;
 
-#ifdef __cplusplus
 	std::vector<block_param> block_params;
 
 	/**
@@ -83,6 +82,15 @@ struct config_param {
 
 	config_param &operator=(const config_param &) = delete;
 
+	/**
+	 * Determine if this is a "null" instance, i.e. an empty
+	 * object that was synthesized and not loaded from a
+	 * configuration file.
+	 */
+	bool IsNull() const {
+		return line == unsigned(-1);
+	}
+
 	gcc_nonnull_all
 	void AddBlockParam(const char *_name, const char *_value,
 			   int _line=-1) {
@@ -91,52 +99,33 @@ struct config_param {
 
 	gcc_nonnull_all gcc_pure
 	const block_param *GetBlockParam(const char *_name) const;
-#endif
-};
 
-#ifdef __cplusplus
+	gcc_pure
+	const char *GetBlockValue(const char *name,
+				  const char *default_value=nullptr) const;
+
+	gcc_malloc
+	char *DupBlockString(const char *name,
+			     const char *default_value=nullptr) const;
+
+	/**
+	 * Same as config_dup_path(), but looks up the setting in the
+	 * specified block.
+	 */
+	Path GetBlockPath(const char *name, const char *default_value,
+			  Error &error) const;
+
+	Path GetBlockPath(const char *name, Error &error) const;
+
+	gcc_pure
+	unsigned GetBlockValue(const char *name, unsigned default_value) const;
+
+	gcc_pure
+	bool GetBlockValue(const char *name, bool default_value) const;
+};
 
 struct ConfigData {
 	std::array<config_param *, std::size_t(CONF_MAX)> params;
 };
-
-#endif
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-gcc_pure
-const char *
-config_get_block_string(const struct config_param *param, const char *name,
-			const char *default_value);
-
-gcc_malloc
-char *
-config_dup_block_string(const struct config_param *param, const char *name,
-			const char *default_value);
-
-/**
- * Same as config_dup_path(), but looks up the setting in the
- * specified block.
- */
-gcc_malloc
-char *
-config_dup_block_path(const struct config_param *param, const char *name,
-		      GError **error_r);
-
-gcc_pure
-unsigned
-config_get_block_unsigned(const struct config_param *param, const char *name,
-			  unsigned default_value);
-
-gcc_pure
-bool
-config_get_block_bool(const struct config_param *param, const char *name,
-		      bool default_value);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

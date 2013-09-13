@@ -21,7 +21,7 @@
 #define MPD_FS_FILESYSTEM_HXX
 
 #include "check.h"
-#include "fd_util.h"
+#include "system/fd_util.h"
 
 #include "Path.hxx"
 
@@ -115,6 +115,16 @@ static inline bool RemoveFile(const Path &file)
  * Wrapper for readlink() that uses #Path names.
  */
 Path ReadLink(const Path &path);
+
+#ifndef WIN32
+
+static inline bool
+MakeFifo(const Path &path, mode_t mode)
+{
+	return mkfifo(path.c_str(), mode) == 0;
+}
+
+#endif
 
 /**
  * Wrapper for access() that uses #Path names.

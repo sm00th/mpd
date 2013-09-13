@@ -19,17 +19,19 @@
 
 #include "config.h"
 #include "TagSave.hxx"
-#include "song.h"
+#include "Song.hxx"
+#include "SongEnumerator.hxx"
 #include "Directory.hxx"
-#include "input_stream.h"
-#include "conf.h"
-#include "decoder_api.h"
+#include "InputStream.hxx"
+#include "ConfigGlobal.hxx"
+#include "DecoderAPI.hxx"
 #include "DecoderList.hxx"
 #include "InputInit.hxx"
 #include "IOThread.hxx"
 #include "PlaylistRegistry.hxx"
 #include "PlaylistPlugin.hxx"
 #include "fs/Path.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
@@ -40,8 +42,8 @@ Directory::Directory() {}
 Directory::~Directory() {}
 
 static void
-my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+my_log_func(const gchar *log_domain, gcc_unused GLogLevelFlags log_level,
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_domain != NULL)
 		g_printerr("%s: %s\n", log_domain, message);
@@ -50,69 +52,70 @@ my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
 }
 
 void
-decoder_initialized(G_GNUC_UNUSED struct decoder *decoder,
-		    G_GNUC_UNUSED const struct audio_format *audio_format,
-		    G_GNUC_UNUSED bool seekable,
-		    G_GNUC_UNUSED float total_time)
+decoder_initialized(gcc_unused struct decoder *decoder,
+		    gcc_unused const AudioFormat audio_format,
+		    gcc_unused bool seekable,
+		    gcc_unused float total_time)
 {
 }
 
 enum decoder_command
-decoder_get_command(G_GNUC_UNUSED struct decoder *decoder)
+decoder_get_command(gcc_unused struct decoder *decoder)
 {
 	return DECODE_COMMAND_NONE;
 }
 
 void
-decoder_command_finished(G_GNUC_UNUSED struct decoder *decoder)
+decoder_command_finished(gcc_unused struct decoder *decoder)
 {
 }
 
 double
-decoder_seek_where(G_GNUC_UNUSED struct decoder *decoder)
+decoder_seek_where(gcc_unused struct decoder *decoder)
 {
 	return 1.0;
 }
 
 void
-decoder_seek_error(G_GNUC_UNUSED struct decoder *decoder)
+decoder_seek_error(gcc_unused struct decoder *decoder)
 {
 }
 
 size_t
-decoder_read(G_GNUC_UNUSED struct decoder *decoder,
+decoder_read(gcc_unused struct decoder *decoder,
 	     struct input_stream *is,
 	     void *buffer, size_t length)
 {
-	return input_stream_lock_read(is, buffer, length, NULL);
+	Error error;
+	return is->LockRead(buffer, length, error);
 }
 
 void
-decoder_timestamp(G_GNUC_UNUSED struct decoder *decoder,
-		  G_GNUC_UNUSED double t)
+decoder_timestamp(gcc_unused struct decoder *decoder,
+		  gcc_unused double t)
 {
 }
 
 enum decoder_command
-decoder_data(G_GNUC_UNUSED struct decoder *decoder,
-	     G_GNUC_UNUSED struct input_stream *is,
+decoder_data(gcc_unused struct decoder *decoder,
+	     gcc_unused struct input_stream *is,
 	     const void *data, size_t datalen,
-	     G_GNUC_UNUSED uint16_t kbit_rate)
+	     gcc_unused uint16_t kbit_rate)
 {
-	G_GNUC_UNUSED ssize_t nbytes = write(1, data, datalen);
+	gcc_unused ssize_t nbytes = write(1, data, datalen);
 	return DECODE_COMMAND_NONE;
 }
 
 enum decoder_command
-decoder_tag(G_GNUC_UNUSED struct decoder *decoder,
-	    G_GNUC_UNUSED struct input_stream *is,
-	    G_GNUC_UNUSED const struct tag *tag)
+decoder_tag(gcc_unused struct decoder *decoder,
+	    gcc_unused struct input_stream *is,
+	    gcc_unused Tag &&tag)
 {
 	return DECODE_COMMAND_NONE;
 }
 
 void
-decoder_replay_gain(G_GNUC_UNUSED struct decoder *decoder,
+decoder_replay_gain(gcc_unused struct decoder *decoder,
 		    const struct replay_gain_info *replay_gain_info)
 {
 	const struct replay_gain_tuple *tuple =
@@ -128,7 +131,7 @@ decoder_replay_gain(G_GNUC_UNUSED struct decoder *decoder,
 }
 
 void
-decoder_mixramp(G_GNUC_UNUSED struct decoder *decoder,
+decoder_mixramp(gcc_unused struct decoder *decoder,
 		char *mixramp_start, char *mixramp_end)
 {
 	g_free(mixramp_start);
@@ -139,9 +142,7 @@ int main(int argc, char **argv)
 {
 	const char *uri;
 	struct input_stream *is = NULL;
-	GError *error = NULL;
-	struct playlist_provider *playlist;
-	struct song *song;
+	Song *song;
 
 	if (argc != 3) {
 		g_printerr("Usage: dump_playlist CONFIG URI\n");
@@ -153,28 +154,27 @@ int main(int argc, char **argv)
 
 	/* initialize GLib */
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
+#endif
+
 	g_log_set_default_handler(my_log_func, NULL);
 
 	/* initialize MPD */
 
 	config_global_init();
-	if (!ReadConfigFile(config_path, &error)) {
-		g_printerr("%s\n", error->message);
-		g_error_free(error);
+
+	Error error;
+	if (!ReadConfigFile(config_path, error)) {
+		g_printerr("%s\n", error.GetMessage());
 		return 1;
 	}
 
 	io_thread_init();
-	if (!io_thread_start(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		return EXIT_FAILURE;
-	}
+	io_thread_start();
 
-	if (!input_stream_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!input_stream_global_init(error)) {
+		g_warning("%s", error.GetMessage());
 		return 2;
 	}
 
@@ -186,27 +186,26 @@ int main(int argc, char **argv)
 	Mutex mutex;
 	Cond cond;
 
-	playlist = playlist_list_open_uri(uri, mutex, cond);
+	auto playlist = playlist_list_open_uri(uri, mutex, cond);
 	if (playlist == NULL) {
 		/* open the stream and wait until it becomes ready */
 
-		is = input_stream_open(uri, mutex, cond, &error);
+		is = input_stream::Open(uri, mutex, cond, error);
 		if (is == NULL) {
-			if (error != NULL) {
-				g_warning("%s", error->message);
-				g_error_free(error);
-			} else
-				g_printerr("input_stream_open() failed\n");
+			if (error.IsDefined())
+				g_warning("%s", error.GetMessage());
+			else
+				g_printerr("input_stream::Open() failed\n");
 			return 2;
 		}
 
-		input_stream_lock_wait_ready(is);
+		is->LockWaitReady();
 
 		/* open the playlist */
 
 		playlist = playlist_list_open_stream(is, uri);
 		if (playlist == NULL) {
-			input_stream_close(is);
+			is->Close();
 			g_printerr("Failed to open playlist\n");
 			return 2;
 		}
@@ -214,7 +213,7 @@ int main(int argc, char **argv)
 
 	/* dump the playlist */
 
-	while ((song = playlist_plugin_read(playlist)) != NULL) {
+	while ((song = playlist->NextSong()) != NULL) {
 		g_print("%s\n", song->uri);
 
 		if (song->end_ms > 0)
@@ -229,16 +228,16 @@ int main(int argc, char **argv)
 				(song->start_ms / 1000) % 60);
 
 		if (song->tag != NULL)
-			tag_save(stdout, song->tag);
+			tag_save(stdout, *song->tag);
 
-		song_free(song);
+		song->Free();
 	}
 
 	/* deinitialize everything */
 
-	playlist_plugin_close(playlist);
+	delete playlist;
 	if (is != NULL)
-		input_stream_close(is);
+		is->Close();
 
 	decoder_plugin_deinit_all();
 	playlist_list_global_finish();

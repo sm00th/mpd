@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "SignalHandlers.hxx"
+#include "event/SignalMonitor.hxx"
 
 #ifndef WIN32
 
@@ -26,29 +27,25 @@
 #include "Main.hxx"
 #include "event/Loop.hxx"
 #include "GlobalEvents.hxx"
-#include "mpd_error.h"
+#include "system/FatalError.hxx"
 
 #include <glib.h>
 
 #include <signal.h>
-#include <errno.h>
-#include <string.h>
 
-static void exit_signal_handler(G_GNUC_UNUSED int signum)
-{
-	GlobalEvents::Emit(GlobalEvents::SHUTDOWN);
-}
+static EventLoop *shutdown_loop;
 
-static void reload_signal_handler(G_GNUC_UNUSED int signum)
+static void
+HandleShutdownSignal()
 {
-	GlobalEvents::Emit(GlobalEvents::RELOAD);
+	shutdown_loop->Break();
 }
 
 static void
 x_sigaction(int signum, const struct sigaction *act)
 {
 	if (sigaction(signum, act, NULL) < 0)
-		MPD_ERROR("sigaction() failed: %s", strerror(errno));
+		FatalSystemError("sigaction() failed");
 }
 
 static void
@@ -60,8 +57,11 @@ handle_reload_event(void)
 
 #endif
 
-void initSigHandlers(void)
+void
+SignalHandlersInit(EventLoop &loop)
 {
+	SignalMonitorInit(loop);
+
 #ifndef WIN32
 	struct sigaction sa;
 
@@ -70,12 +70,16 @@ void initSigHandlers(void)
 	sa.sa_handler = SIG_IGN;
 	x_sigaction(SIGPIPE, &sa);
 
-	sa.sa_handler = exit_signal_handler;
-	x_sigaction(SIGINT, &sa);
-	x_sigaction(SIGTERM, &sa);
+	shutdown_loop = &loop;
+	SignalMonitorRegister(SIGINT, HandleShutdownSignal);
+	SignalMonitorRegister(SIGTERM, HandleShutdownSignal);
 
-	GlobalEvents::Register(GlobalEvents::RELOAD, handle_reload_event);
-	sa.sa_handler = reload_signal_handler;
-	x_sigaction(SIGHUP, &sa);
+	SignalMonitorRegister(SIGHUP, handle_reload_event);
 #endif
+}
+
+void
+SignalHandlersFinish()
+{
+	SignalMonitorFinish();
 }

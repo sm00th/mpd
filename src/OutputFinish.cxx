@@ -18,13 +18,9 @@
  */
 
 #include "config.h"
-
-extern "C" {
-#include "output_internal.h"
-#include "output_plugin.h"
-#include "mixer_control.h"
-}
-
+#include "OutputInternal.hxx"
+#include "OutputPlugin.hxx"
+#include "MixerControl.hxx"
 #include "FilterInternal.hxx"
 
 #include <assert.h>
@@ -39,14 +35,9 @@ ao_base_finish(struct audio_output *ao)
 	if (ao->mixer != NULL)
 		mixer_free(ao->mixer);
 
-	g_cond_free(ao->cond);
-	g_mutex_free(ao->mutex);
-
 	delete ao->replay_gain_filter;
 	delete ao->other_replay_gain_filter;
 	delete ao->filter;
-
-	pcm_buffer_deinit(&ao->cross_fade_buffer);
 }
 
 void

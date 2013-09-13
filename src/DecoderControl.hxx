@@ -20,14 +20,17 @@
 #ifndef MPD_DECODER_CONTROL_HXX
 #define MPD_DECODER_CONTROL_HXX
 
-#include "decoder_command.h"
-#include "audio_format.h"
+#include "DecoderCommand.hxx"
+#include "AudioFormat.hxx"
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
 #include <assert.h>
+
+struct Song;
 
 enum decoder_state {
 	DECODE_STATE_STOP = 0,
@@ -75,7 +78,7 @@ struct decoder_control {
 	 * The object must be freed when this object transitions to
 	 * any other state (usually #DECODE_STATE_START).
 	 */
-	GError *error;
+	Error error;
 
 	bool quit;
 	bool seek_error;
@@ -83,10 +86,10 @@ struct decoder_control {
 	double seek_where;
 
 	/** the format of the song file */
-	struct audio_format in_audio_format;
+	AudioFormat in_audio_format;
 
 	/** the format being sent to the music pipe */
-	struct audio_format out_audio_format;
+	AudioFormat out_audio_format;
 
 	/**
 	 * The song currently being decoded.  This attribute is set by
@@ -96,7 +99,7 @@ struct decoder_control {
 	 * This is a duplicate, and must be freed when this attribute
 	 * is cleared.
 	 */
-	struct song *song;
+	Song *song;
 
 	/**
 	 * The initial seek position (in milliseconds), e.g. to the
@@ -216,38 +219,41 @@ struct decoder_control {
 	}
 
 	/**
-	 * Checks whether an error has occurred, and if so, returns a newly
-	 * allocated copy of the #GError object.
+	 * Checks whether an error has occurred, and if so, returns a
+	 * copy of the #Error object.
 	 *
 	 * Caller must lock the object.
 	 */
-	GError *GetError() const {
+	gcc_pure
+	Error GetError() const {
 		assert(command == DECODE_COMMAND_NONE);
-		assert(state != DECODE_STATE_ERROR || error != nullptr);
+		assert(state != DECODE_STATE_ERROR || error.IsDefined());
 
-		return state == DECODE_STATE_ERROR
-			? g_error_copy(error)
-			: nullptr;
+		Error result;
+		if (state == DECODE_STATE_ERROR)
+			result.Set(error);
+		return result;
 	}
 
 	/**
 	 * Like dc_get_error(), but locks and unlocks the object.
 	 */
-	GError *LockGetError() const {
+	gcc_pure
+	Error LockGetError() const {
 		Lock();
-		GError *result = GetError();
+		Error result = GetError();
 		Unlock();
 		return result;
 	}
 
 	/**
-	 * Clear the error condition and free the #GError object (if any).
+	 * Clear the error condition and free the #Error object (if any).
 	 *
 	 * Caller must lock the object.
 	 */
 	void ClearError() {
 		if (state == DECODE_STATE_ERROR) {
-			g_error_free(error);
+			error.Clear();
 			state = DECODE_STATE_STOP;
 		}
 	}
@@ -260,10 +266,10 @@ struct decoder_control {
 	 * Caller must lock the object.
 	 */
 	gcc_pure
-	bool IsCurrentSong(const struct song *_song) const;
+	bool IsCurrentSong(const Song *_song) const;
 
 	gcc_pure
-	bool LockIsCurrentSong(const struct song *_song) const {
+	bool LockIsCurrentSong(const Song *_song) const {
 		Lock();
 		const bool result = IsCurrentSong(_song);
 		Unlock();
@@ -280,7 +286,7 @@ struct decoder_control {
 	 * @param pipe the pipe which receives the decoded chunks (owned by
 	 * the caller)
 	 */
-	void Start(struct song *song, unsigned start_ms, unsigned end_ms,
+	void Start(Song *song, unsigned start_ms, unsigned end_ms,
 		   music_buffer *buffer, music_pipe *pipe);
 
 	void Stop();

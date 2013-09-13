@@ -12,29 +12,29 @@ stores info about all available music, and this info can be easily searched and
 retrieved.  Player control, info retrieval, and playlist management can all be
 managed remotely.
 
-MPD searches for a config file in \fB~/.mpdconf\fP then \fB/etc/mpd.conf\fP or
-uses CONF_FILE.
+MPD searches for a config file in \fB$XDG_CONFIG_HOME/mpd/mpd.conf\fP then
+\fB~/.mpdconf\fP then \fB/etc/mpd.conf\fP or uses CONF_FILE.
 
 Read more about MPD at <\fBhttp://www.musicpd.org/\fP>.
 .SH OPTIONS
 .TP
-.BI --help
+.BI \-\-help
 Output a brief help message.
 .TP
-.BI --kill
+.BI \-\-kill
 Kill the currently running mpd session.  The pid_file parameter must be
 specified in the config file for this to work.
 .TP
-.BI --no-daemon
+.BI \-\-no\-daemon
 Don't detach from console.
 .TP
-.BI --stderr
+.BI \-\-stderr
 Print messages stderr.
 .TP
-.BI --verbose
+.BI \-\-verbose
 Verbose logging.
 .TP
-.BI --version
+.BI \-\-version
 Print version information.
 .SH FILES
 .TP

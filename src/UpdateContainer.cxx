@@ -23,14 +23,12 @@
 #include "UpdateDatabase.hxx"
 #include "DatabaseLock.hxx"
 #include "Directory.hxx"
-#include "song.h"
-#include "decoder_plugin.h"
+#include "Song.hxx"
+#include "DecoderPlugin.hxx"
 #include "Mapper.hxx"
 #include "fs/Path.hxx"
-
-extern "C" {
-#include "tag_handler.h"
-}
+#include "tag/TagHandler.hxx"
+#include "tag/Tag.hxx"
 
 #include <glib.h>
 
@@ -89,7 +87,7 @@ update_container_file(Directory *directory,
 	char *vtrack;
 	unsigned int tnum = 0;
 	while ((vtrack = plugin->container_scan(pathname.c_str(), ++tnum)) != NULL) {
-		struct song *song = song_file_new(vtrack, contdir);
+		Song *song = Song::NewFile(vtrack, contdir);
 
 		// shouldn't be necessary but it's there..
 		song->mtime = st->st_mtime;
@@ -97,7 +95,7 @@ update_container_file(Directory *directory,
 		const Path child_path_fs =
 			map_directory_child_fs(contdir, vtrack);
 
-		song->tag = tag_new();
+		song->tag = new Tag();
 		decoder_plugin_scan_file(plugin, child_path_fs.c_str(),
 					 &add_tag_handler, song->tag);
 

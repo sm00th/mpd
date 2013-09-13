@@ -19,15 +19,15 @@
 
 #include "config.h"
 #include "SongSave.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "TagSave.hxx"
 #include "Directory.hxx"
 #include "TextFile.hxx"
-#include "tag.h"
-
-extern "C" {
-#include "string_util.h"
-}
+#include "tag/Tag.hxx"
+#include "tag/TagBuilder.hxx"
+#include "util/StringUtil.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
 #include <glib.h>
 
@@ -39,14 +39,10 @@ extern "C" {
 #define SONG_MTIME "mtime"
 #define SONG_END "song_end"
 
-static GQuark
-song_save_quark(void)
-{
-	return g_quark_from_static_string("song_save");
-}
+static constexpr Domain song_save_domain("song_save");
 
 void
-song_save(FILE *fp, const struct song *song)
+song_save(FILE *fp, const Song *song)
 {
 	fprintf(fp, SONG_BEGIN "%s\n", song->uri);
 
@@ -55,34 +51,34 @@ song_save(FILE *fp, const struct song *song)
 	else if (song->start_ms > 0)
 		fprintf(fp, "Range: %u-\n", song->start_ms);
 
-	if (song->tag != NULL)
-		tag_save(fp, song->tag);
+	if (song->tag != nullptr)
+		tag_save(fp, *song->tag);
 
 	fprintf(fp, SONG_MTIME ": %li\n", (long)song->mtime);
 	fprintf(fp, SONG_END "\n");
 }
 
-struct song *
+Song *
 song_load(TextFile &file, Directory *parent, const char *uri,
-	  GError **error_r)
+	  Error &error)
 {
-	struct song *song = parent != NULL
-		? song_file_new(uri, parent)
-		: song_remote_new(uri);
+	Song *song = parent != NULL
+		? Song::NewFile(uri, parent)
+		: Song::NewRemote(uri);
 	char *line, *colon;
 	enum tag_type type;
 	const char *value;
+
+	TagBuilder tag;
 
 	while ((line = file.ReadLine()) != NULL &&
 	       strcmp(line, SONG_END) != 0) {
 		colon = strchr(line, ':');
 		if (colon == NULL || colon == line) {
-			if (song->tag != NULL)
-				tag_end_add(song->tag);
-			song_free(song);
+			song->Free();
 
-			g_set_error(error_r, song_save_quark(), 0,
-				    "unknown line in db: %s", line);
+			error.Format(song_save_domain,
+				     "unknown line in db: %s", line);
 			return NULL;
 		}
 
@@ -90,26 +86,11 @@ song_load(TextFile &file, Directory *parent, const char *uri,
 		value = strchug_fast_c(colon);
 
 		if ((type = tag_name_parse(line)) != TAG_NUM_OF_ITEM_TYPES) {
-			if (!song->tag) {
-				song->tag = tag_new();
-				tag_begin_add(song->tag);
-			}
-
-			tag_add_item(song->tag, type, value);
+			tag.AddItem(type, value);
 		} else if (strcmp(line, "Time") == 0) {
-			if (!song->tag) {
-				song->tag = tag_new();
-				tag_begin_add(song->tag);
-			}
-
-			song->tag->time = atoi(value);
+			tag.SetTime(atoi(value));
 		} else if (strcmp(line, "Playlist") == 0) {
-			if (!song->tag) {
-				song->tag = tag_new();
-				tag_begin_add(song->tag);
-			}
-
-			song->tag->has_playlist = strcmp(value, "yes") == 0;
+			tag.SetHasPlaylist(strcmp(value, "yes") == 0);
 		} else if (strcmp(line, SONG_MTIME) == 0) {
 			song->mtime = atoi(value);
 		} else if (strcmp(line, "Range") == 0) {
@@ -119,18 +100,16 @@ song_load(TextFile &file, Directory *parent, const char *uri,
 			if (*endptr == '-')
 				song->end_ms = strtoul(endptr + 1, NULL, 10);
 		} else {
-			if (song->tag != NULL)
-				tag_end_add(song->tag);
-			song_free(song);
+			song->Free();
 
-			g_set_error(error_r, song_save_quark(), 0,
-				    "unknown line in db: %s", line);
+			error.Format(song_save_domain,
+				     "unknown line in db: %s", line);
 			return NULL;
 		}
 	}
 
-	if (song->tag != NULL)
-		tag_end_add(song->tag);
+	if (tag.IsDefined())
+		song->tag = tag.Commit();
 
 	return song;
 }

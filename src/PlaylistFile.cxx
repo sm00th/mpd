@@ -24,18 +24,18 @@
 #include "PlaylistVector.hxx"
 #include "DatabasePlugin.hxx"
 #include "DatabaseGlue.hxx"
-#include "song.h"
-#include "io_error.h"
+#include "Song.hxx"
 #include "Mapper.hxx"
 #include "TextFile.hxx"
-#include "conf.h"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
+#include "ConfigDefaults.hxx"
 #include "Idle.hxx"
 #include "fs/Path.hxx"
 #include "fs/FileSystem.hxx"
-
-extern "C" {
-#include "uri.h"
-}
+#include "fs/DirectoryReader.hxx"
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
 
 #include <assert.h>
 #include <sys/types.h>
@@ -80,24 +80,21 @@ spl_valid_name(const char *name_utf8)
 		strchr(name_utf8, '\r') == NULL;
 }
 
-static const char *
-spl_map(GError **error_r)
+static const Path &
+spl_map(Error &error)
 {
 	const Path &path_fs = map_spl_path();
 	if (path_fs.IsNull())
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_DISABLED,
-				    "Stored playlists are disabled");
-
-	return path_fs.c_str();
+		error.Set(playlist_domain, PLAYLIST_RESULT_DISABLED,
+			  "Stored playlists are disabled");
+	return path_fs;
 }
 
 static bool
-spl_check_name(const char *name_utf8, GError **error_r)
+spl_check_name(const char *name_utf8, Error &error)
 {
 	if (!spl_valid_name(name_utf8)) {
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_BAD_NAME,
+		error.Set(playlist_domain, PLAYLIST_RESULT_BAD_NAME,
 				    "Bad playlist name");
 		return false;
 	}
@@ -106,61 +103,57 @@ spl_check_name(const char *name_utf8, GError **error_r)
 }
 
 static Path
-spl_map_to_fs(const char *name_utf8, GError **error_r)
+spl_map_to_fs(const char *name_utf8, Error &error)
 {
-	if (spl_map(error_r) == NULL ||
-	    !spl_check_name(name_utf8, error_r))
+	if (spl_map(error).IsNull() || !spl_check_name(name_utf8, error))
 		return Path::Null();
 
 	Path path_fs = map_spl_utf8_to_fs(name_utf8);
 	if (path_fs.IsNull())
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_BAD_NAME,
-				    "Bad playlist name");
+		error.Set(playlist_domain, PLAYLIST_RESULT_BAD_NAME,
+			  "Bad playlist name");
 
 	return path_fs;
 }
 
 /**
- * Create a GError for the current errno.
+ * Create an #Error for the current errno.
  */
 static void
-playlist_errno(GError **error_r)
+playlist_errno(Error &error)
 {
 	switch (errno) {
 	case ENOENT:
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_NO_SUCH_LIST,
-				    "No such playlist");
+		error.Set(playlist_domain, PLAYLIST_RESULT_NO_SUCH_LIST,
+			  "No such playlist");
 		break;
 
 	default:
-		set_error_errno(error_r);
+		error.SetErrno();
 		break;
 	}
 }
 
 static bool
 LoadPlaylistFileInfo(PlaylistInfo &info,
-		     const char *parent_path_fs, const char *name_fs)
+		     const Path &parent_path_fs, const Path &name_fs)
 {
-	size_t name_length = strlen(name_fs);
+	const char *name_fs_str = name_fs.c_str();
+	size_t name_length = strlen(name_fs_str);
 
 	if (name_length < sizeof(PLAYLIST_FILE_SUFFIX) ||
-	    memchr(name_fs, '\n', name_length) != NULL)
+	    memchr(name_fs_str, '\n', name_length) != NULL)
 		return false;
 
-	if (!g_str_has_suffix(name_fs, PLAYLIST_FILE_SUFFIX))
+	if (!g_str_has_suffix(name_fs_str, PLAYLIST_FILE_SUFFIX))
 		return false;
 
-	char *path_fs = g_build_filename(parent_path_fs, name_fs, NULL);
+	Path path_fs = Path::Build(parent_path_fs, name_fs);
 	struct stat st;
-	int ret = stat(path_fs, &st);
-	g_free(path_fs);
-	if (ret < 0 || !S_ISREG(st.st_mode))
+	if (!StatFile(path_fs, st) || !S_ISREG(st.st_mode))
 		return false;
 
-	char *name = g_strndup(name_fs,
+	char *name = g_strndup(name_fs_str,
 			       name_length + 1 - sizeof(PLAYLIST_FILE_SUFFIX));
 	std::string name_utf8 = Path::ToUTF8(name);
 	g_free(name);
@@ -173,47 +166,46 @@ LoadPlaylistFileInfo(PlaylistInfo &info,
 }
 
 PlaylistVector
-ListPlaylistFiles(GError **error_r)
+ListPlaylistFiles(Error &error)
 {
 	PlaylistVector list;
 
-	const char *parent_path_fs = spl_map(error_r);
-	if (parent_path_fs == NULL)
+	const Path &parent_path_fs = spl_map(error);
+	if (parent_path_fs.IsNull())
 		return list;
 
-	DIR *dir = opendir(parent_path_fs);
-	if (dir == NULL) {
-		set_error_errno(error_r);
+	DirectoryReader reader(parent_path_fs);
+	if (reader.HasFailed()) {
+		error.SetErrno();
 		return list;
 	}
 
 	PlaylistInfo info;
-	struct dirent *ent;
-	while ((ent = readdir(dir)) != NULL) {
-		if (LoadPlaylistFileInfo(info, parent_path_fs, ent->d_name))
+	while (reader.ReadEntry()) {
+		const Path entry = reader.GetEntry();
+		if (LoadPlaylistFileInfo(info, parent_path_fs, entry))
 			list.push_back(std::move(info));
 	}
 
-	closedir(dir);
 	return list;
 }
 
 static bool
 SavePlaylistFile(const PlaylistFileContents &contents, const char *utf8path,
-		 GError **error_r)
+		 Error &error)
 {
 	assert(utf8path != NULL);
 
-	if (spl_map(error_r) == NULL)
+	if (spl_map(error).IsNull())
 		return false;
 
-	const Path path_fs = spl_map_to_fs(utf8path, error_r);
+	const Path path_fs = spl_map_to_fs(utf8path, error);
 	if (path_fs.IsNull())
 		return false;
 
 	FILE *file = FOpen(path_fs, FOpenMode::WriteText);
 	if (file == NULL) {
-		playlist_errno(error_r);
+		playlist_errno(error);
 		return false;
 	}
 
@@ -225,20 +217,20 @@ SavePlaylistFile(const PlaylistFileContents &contents, const char *utf8path,
 }
 
 PlaylistFileContents
-LoadPlaylistFile(const char *utf8path, GError **error_r)
+LoadPlaylistFile(const char *utf8path, Error &error)
 {
 	PlaylistFileContents contents;
 
-	if (spl_map(error_r) == NULL)
+	if (spl_map(error).IsNull())
 		return contents;
 
-	const Path path_fs = spl_map_to_fs(utf8path, error_r);
+	const Path path_fs = spl_map_to_fs(utf8path, error);
 	if (path_fs.IsNull())
 		return contents;
 
 	TextFile file(path_fs);
 	if (file.HasFailed()) {
-		playlist_errno(error_r);
+		playlist_errno(error);
 		return contents;
 	}
 
@@ -268,24 +260,20 @@ LoadPlaylistFile(const char *utf8path, GError **error_r)
 
 bool
 spl_move_index(const char *utf8path, unsigned src, unsigned dest,
-	       GError **error_r)
+	       Error &error)
 {
 	if (src == dest)
 		/* this doesn't check whether the playlist exists, but
 		   what the hell.. */
 		return true;
 
-	GError *error = nullptr;
-	auto contents = LoadPlaylistFile(utf8path, &error);
-	if (contents.empty() && error != nullptr) {
-		g_propagate_error(error_r, error);
+	auto contents = LoadPlaylistFile(utf8path, error);
+	if (contents.empty() && error.IsDefined())
 		return false;
-	}
 
 	if (src >= contents.size() || dest >= contents.size()) {
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_BAD_RANGE,
-				    "Bad range");
+		error.Set(playlist_domain, PLAYLIST_RESULT_BAD_RANGE,
+			  "Bad range");
 		return false;
 	}
 
@@ -296,25 +284,25 @@ spl_move_index(const char *utf8path, unsigned src, unsigned dest,
 	const auto dest_i = std::next(contents.begin(), dest);
 	contents.insert(dest_i, std::move(value));
 
-	bool result = SavePlaylistFile(contents, utf8path, error_r);
+	bool result = SavePlaylistFile(contents, utf8path, error);
 
 	idle_add(IDLE_STORED_PLAYLIST);
 	return result;
 }
 
 bool
-spl_clear(const char *utf8path, GError **error_r)
+spl_clear(const char *utf8path, Error &error)
 {
-	if (spl_map(error_r) == NULL)
+	if (spl_map(error).IsNull())
 		return false;
 
-	const Path path_fs = spl_map_to_fs(utf8path, error_r);
+	const Path path_fs = spl_map_to_fs(utf8path, error);
 	if (path_fs.IsNull())
 		return false;
 
 	FILE *file = FOpen(path_fs, FOpenMode::WriteText);
 	if (file == NULL) {
-		playlist_errno(error_r);
+		playlist_errno(error);
 		return false;
 	}
 
@@ -325,14 +313,14 @@ spl_clear(const char *utf8path, GError **error_r)
 }
 
 bool
-spl_delete(const char *name_utf8, GError **error_r)
+spl_delete(const char *name_utf8, Error &error)
 {
-	const Path path_fs = spl_map_to_fs(name_utf8, error_r);
+	const Path path_fs = spl_map_to_fs(name_utf8, error);
 	if (path_fs.IsNull())
 		return false;
 
 	if (!RemoveFile(path_fs)) {
-		playlist_errno(error_r);
+		playlist_errno(error);
 		return false;
 	}
 
@@ -341,58 +329,53 @@ spl_delete(const char *name_utf8, GError **error_r)
 }
 
 bool
-spl_remove_index(const char *utf8path, unsigned pos, GError **error_r)
+spl_remove_index(const char *utf8path, unsigned pos, Error &error)
 {
-	GError *error = nullptr;
-	auto contents = LoadPlaylistFile(utf8path, &error);
-	if (contents.empty() && error != nullptr) {
-		g_propagate_error(error_r, error);
+	auto contents = LoadPlaylistFile(utf8path, error);
+	if (contents.empty() && error.IsDefined())
 		return false;
-	}
 
 	if (pos >= contents.size()) {
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_BAD_RANGE,
-				    "Bad range");
+		error.Set(playlist_domain, PLAYLIST_RESULT_BAD_RANGE,
+			  "Bad range");
 		return false;
 	}
 
 	contents.erase(std::next(contents.begin(), pos));
 
-	bool result = SavePlaylistFile(contents, utf8path, error_r);
+	bool result = SavePlaylistFile(contents, utf8path, error);
 
 	idle_add(IDLE_STORED_PLAYLIST);
 	return result;
 }
 
 bool
-spl_append_song(const char *utf8path, struct song *song, GError **error_r)
+spl_append_song(const char *utf8path, Song *song, Error &error)
 {
-	if (spl_map(error_r) == NULL)
+	if (spl_map(error).IsNull())
 		return false;
 
-	const Path path_fs = spl_map_to_fs(utf8path, error_r);
+	const Path path_fs = spl_map_to_fs(utf8path, error);
 	if (path_fs.IsNull())
 		return false;
 
 	FILE *file = FOpen(path_fs, FOpenMode::AppendText);
 	if (file == NULL) {
-		playlist_errno(error_r);
+		playlist_errno(error);
 		return false;
 	}
 
 	struct stat st;
 	if (fstat(fileno(file), &st) < 0) {
-		playlist_errno(error_r);
+		playlist_errno(error);
 		fclose(file);
 		return false;
 	}
 
 	if (st.st_size / (MPD_PATH_MAX + 1) >= (off_t)playlist_max_length) {
 		fclose(file);
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_TOO_LARGE,
-				    "Stored playlist is too large");
+		error.Set(playlist_domain, PLAYLIST_RESULT_TOO_LARGE,
+			  "Stored playlist is too large");
 		return false;
 	}
 
@@ -405,23 +388,23 @@ spl_append_song(const char *utf8path, struct song *song, GError **error_r)
 }
 
 bool
-spl_append_uri(const char *url, const char *utf8file, GError **error_r)
+spl_append_uri(const char *url, const char *utf8file, Error &error)
 {
 	if (uri_has_scheme(url)) {
-		struct song *song = song_remote_new(url);
-		bool success = spl_append_song(utf8file, song, error_r);
-		song_free(song);
+		Song *song = Song::NewRemote(url);
+		bool success = spl_append_song(utf8file, song, error);
+		song->Free();
 		return success;
 	} else {
-		const Database *db = GetDatabase(error_r);
+		const Database *db = GetDatabase(error);
 		if (db == nullptr)
 			return false;
 
-		song *song = db->GetSong(url, error_r);
+		Song *song = db->GetSong(url, error);
 		if (song == nullptr)
 			return false;
 
-		bool success = spl_append_song(utf8file, song, error_r);
+		bool success = spl_append_song(utf8file, song, error);
 		db->ReturnSong(song);
 		return success;
 	}
@@ -429,24 +412,22 @@ spl_append_uri(const char *url, const char *utf8file, GError **error_r)
 
 static bool
 spl_rename_internal(const Path &from_path_fs, const Path &to_path_fs,
-		    GError **error_r)
+		    Error &error)
 {
 	if (!FileExists(from_path_fs)) {
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_NO_SUCH_LIST,
-				    "No such playlist");
+		error.Set(playlist_domain, PLAYLIST_RESULT_NO_SUCH_LIST,
+			  "No such playlist");
 		return false;
 	}
 
 	if (FileExists(to_path_fs)) {
-		g_set_error_literal(error_r, playlist_quark(),
-				    PLAYLIST_RESULT_LIST_EXISTS,
-				    "Playlist exists already");
+		error.Set(playlist_domain, PLAYLIST_RESULT_LIST_EXISTS,
+			  "Playlist exists already");
 		return false;
 	}
 
 	if (!RenameFile(from_path_fs, to_path_fs)) {
-		playlist_errno(error_r);
+		playlist_errno(error);
 		return false;
 	}
 
@@ -455,18 +436,18 @@ spl_rename_internal(const Path &from_path_fs, const Path &to_path_fs,
 }
 
 bool
-spl_rename(const char *utf8from, const char *utf8to, GError **error_r)
+spl_rename(const char *utf8from, const char *utf8to, Error &error)
 {
-	if (spl_map(error_r) == NULL)
+	if (spl_map(error).IsNull())
 		return false;
 
-	Path from_path_fs = spl_map_to_fs(utf8from, error_r);
+	Path from_path_fs = spl_map_to_fs(utf8from, error);
 	if (from_path_fs.IsNull())
 		return false;
 
-	Path to_path_fs = spl_map_to_fs(utf8to, error_r);
+	Path to_path_fs = spl_map_to_fs(utf8to, error);
 	if (to_path_fs.IsNull())
 		return false;
 
-	return spl_rename_internal(from_path_fs, to_path_fs, error_r);
+	return spl_rename_internal(from_path_fs, to_path_fs, error);
 }

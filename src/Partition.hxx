@@ -23,19 +23,24 @@
 #include "Playlist.hxx"
 #include "PlayerControl.hxx"
 
+struct Instance;
+
 /**
  * A partition of the Music Player Daemon.  It is a separate unit with
  * a playlist, a player, outputs etc.
  */
 struct Partition {
+	Instance &instance;
+
 	struct playlist playlist;
 
 	player_control pc;
 
-	Partition(unsigned max_length,
+	Partition(Instance &_instance,
+		  unsigned max_length,
 		  unsigned buffer_chunks,
 		  unsigned buffered_before_play)
-		:playlist(max_length),
+		:instance(_instance), playlist(max_length),
 		 pc(buffer_chunks, buffered_before_play) {
 	}
 
@@ -71,7 +76,7 @@ struct Partition {
 		return playlist.DeleteRange(pc, start, end);
 	}
 
-	void DeleteSong(const song &song) {
+	void DeleteSong(const Song &song) {
 		playlist.DeleteSong(pc, song);
 	}
 

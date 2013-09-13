@@ -26,15 +26,14 @@
 #include "PlaylistRegistry.hxx"
 #include "PlaylistPlugin.hxx"
 #include "QueuePrint.hxx"
+#include "SongEnumerator.hxx"
 #include "SongPrint.hxx"
 #include "DatabaseGlue.hxx"
 #include "DatabasePlugin.hxx"
 #include "Client.hxx"
-#include "input_stream.h"
-
-extern "C" {
-#include "song.h"
-}
+#include "InputStream.hxx"
+#include "Song.hxx"
+#include "util/Error.hxx"
 
 void
 playlist_print_uris(Client *client, const struct playlist *playlist)
@@ -115,11 +114,11 @@ playlist_print_changes_position(Client *client,
 static bool
 PrintSongDetails(Client *client, const char *uri_utf8)
 {
-	const Database *db = GetDatabase(nullptr);
+	const Database *db = GetDatabase(IgnoreError());
 	if (db == nullptr)
 		return false;
 
-	song *song = db->GetSong(uri_utf8, nullptr);
+	Song *song = db->GetSong(uri_utf8, IgnoreError());
 	if (song == nullptr)
 		return false;
 
@@ -130,14 +129,11 @@ PrintSongDetails(Client *client, const char *uri_utf8)
 
 bool
 spl_print(Client *client, const char *name_utf8, bool detail,
-	  GError **error_r)
+	  Error &error)
 {
-	GError *error = NULL;
-	PlaylistFileContents contents = LoadPlaylistFile(name_utf8, &error);
-	if (contents.empty() && error != nullptr) {
-		g_propagate_error(error_r, error);
+	PlaylistFileContents contents = LoadPlaylistFile(name_utf8, error);
+	if (contents.empty() && error.IsDefined())
 		return false;
-	}
 
 	for (const auto &uri_utf8 : contents) {
 		if (!detail || !PrintSongDetails(client, uri_utf8.c_str()))
@@ -150,12 +146,12 @@ spl_print(Client *client, const char *name_utf8, bool detail,
 
 static void
 playlist_provider_print(Client *client, const char *uri,
-			struct playlist_provider *playlist, bool detail)
+			SongEnumerator &e, bool detail)
 {
-	struct song *song;
+	Song *song;
 	char *base_uri = uri != NULL ? g_path_get_dirname(uri) : NULL;
 
-	while ((song = playlist_plugin_read(playlist)) != NULL) {
+	while ((song = e.NextSong()) != nullptr) {
 		song = playlist_check_translate_song(song, base_uri, false);
 		if (song == NULL)
 			continue;
@@ -165,7 +161,7 @@ playlist_provider_print(Client *client, const char *uri,
 		else
 			song_print_uri(client, song);
 
-		song_free(song);
+		song->Free();
 	}
 
 	g_free(base_uri);
@@ -178,16 +174,15 @@ playlist_file_print(Client *client, const char *uri, bool detail)
 	Cond cond;
 
 	struct input_stream *is;
-	struct playlist_provider *playlist =
-		playlist_open_any(uri, mutex, cond, &is);
+	SongEnumerator *playlist = playlist_open_any(uri, mutex, cond, &is);
 	if (playlist == NULL)
 		return false;
 
-	playlist_provider_print(client, uri, playlist, detail);
-	playlist_plugin_close(playlist);
+	playlist_provider_print(client, uri, *playlist, detail);
+	delete playlist;
 
 	if (is != NULL)
-		input_stream_close(is);
+		is->Close();
 
 	return true;
 }

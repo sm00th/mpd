@@ -19,13 +19,16 @@
 
 #include "config.h"
 #include "PlsPlaylistPlugin.hxx"
-#include "MemoryPlaylistProvider.hxx"
-#include "input_stream.h"
-#include "uri.h"
-#include "song.h"
-#include "tag.h"
+#include "PlaylistPlugin.hxx"
+#include "MemorySongEnumerator.hxx"
+#include "InputStream.hxx"
+#include "Song.hxx"
+#include "tag/Tag.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
+
+#include <string>
 
 static void
 pls_parser(GKeyFile *keyfile, std::forward_list<SongPointer> &songs)
@@ -51,7 +54,7 @@ pls_parser(GKeyFile *keyfile, std::forward_list<SongPointer> &songs)
 	}
 
 	while (num_entries > 0) {
-		struct song *song;
+		Song *song;
 		key = g_strdup_printf("File%i", num_entries);
 		value = g_key_file_get_string(keyfile, "playlist", key,
 					      &error);
@@ -63,7 +66,7 @@ pls_parser(GKeyFile *keyfile, std::forward_list<SongPointer> &songs)
 		}
 		g_free(key);
 
-		song = song_remote_new(value);
+		song = Song::NewRemote(value);
 		g_free(value);
 
 		key = g_strdup_printf("Title%i", num_entries);
@@ -72,8 +75,8 @@ pls_parser(GKeyFile *keyfile, std::forward_list<SongPointer> &songs)
 		g_free(key);
 		if(error == NULL && value){
 			if (song->tag == NULL)
-				song->tag = tag_new();
-			tag_add_item(song->tag,TAG_TITLE, value);
+				song->tag = new Tag();
+			song->tag->AddItem(TAG_TITLE, value);
 		}
 		/* Ignore errors? Most likely value not present */
 		if(error) g_error_free(error);
@@ -86,7 +89,7 @@ pls_parser(GKeyFile *keyfile, std::forward_list<SongPointer> &songs)
 		g_free(key);
 		if(error == NULL && length > 0){
 			if (song->tag == NULL)
-				song->tag = tag_new();
+				song->tag = new Tag();
 			song->tag->time = length;
 		}
 		/* Ignore errors? Most likely value not present */
@@ -99,46 +102,42 @@ pls_parser(GKeyFile *keyfile, std::forward_list<SongPointer> &songs)
 
 }
 
-static struct playlist_provider *
+static SongEnumerator *
 pls_open_stream(struct input_stream *is)
 {
 	GError *error = NULL;
+	Error error2;
 	size_t nbytes;
 	char buffer[1024];
 	bool success;
 	GKeyFile *keyfile;
-	GString *kf_data = g_string_new("");
+
+	std::string kf_data;
 
 	do {
-		nbytes = input_stream_lock_read(is, buffer, sizeof(buffer),
-						&error);
+		nbytes = is->LockRead(buffer, sizeof(buffer), error2);
 		if (nbytes == 0) {
-			if (error != NULL) {
-				g_string_free(kf_data, TRUE);
-				g_warning("%s", error->message);
-				g_error_free(error);
+			if (error2.IsDefined()) {
+				g_warning("%s", error2.GetMessage());
 				return NULL;
 			}
 
 			break;
 		}
 
-		kf_data = g_string_append_len(kf_data, buffer,nbytes);
+		kf_data.append(buffer, nbytes);
 		/* Limit to 64k */
-	} while(kf_data->len < 65536);
+	} while (kf_data.length() < 65536);
 
-	if (kf_data->len == 0) {
+	if (kf_data.empty()) {
 		g_warning("KeyFile parser failed: No Data");
-		g_string_free(kf_data, TRUE);
 		return NULL;
 	}
 
 	keyfile = g_key_file_new();
 	success = g_key_file_load_from_data(keyfile,
-					    kf_data->str, kf_data->len,
+					    kf_data.data(), kf_data.length(),
 					    G_KEY_FILE_NONE, &error);
-
-	g_string_free(kf_data, TRUE);
 
 	if (!success) {
 		g_warning("KeyFile parser failed: %s", error->message);
@@ -152,7 +151,7 @@ pls_open_stream(struct input_stream *is)
 	g_key_file_free(keyfile);
 
 	songs.reverse();
-	return new MemoryPlaylistProvider(std::move(songs));
+	return new MemorySongEnumerator(std::move(songs));
 }
 
 static const char *const pls_suffixes[] = {
@@ -172,8 +171,6 @@ const struct playlist_plugin pls_playlist_plugin = {
 	nullptr,
 	nullptr,
 	pls_open_stream,
-	nullptr,
-	nullptr,
 
 	nullptr,
 	pls_suffixes,

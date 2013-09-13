@@ -22,6 +22,9 @@
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 #include "event/Loop.hxx"
+#include "system/FatalError.hxx"
+
+#include <glib.h>
 
 #include <assert.h>
 
@@ -43,7 +46,7 @@ io_thread_run(void)
 }
 
 static gpointer
-io_thread_func(G_GNUC_UNUSED gpointer arg)
+io_thread_func(gcc_unused gpointer arg)
 {
 	/* lock+unlock to synchronize with io_thread_start(), to be
 	   sure that io.thread is set */
@@ -63,19 +66,22 @@ io_thread_init(void)
 	io.loop = new EventLoop();
 }
 
-bool
-io_thread_start(GError **error_r)
+void
+io_thread_start()
 {
 	assert(io.loop != NULL);
 	assert(io.thread == NULL);
 
-	io.mutex.lock();
-	io.thread = g_thread_create(io_thread_func, NULL, true, error_r);
-	io.mutex.unlock();
-	if (io.thread == NULL)
-		return false;
+	const ScopeLock protect(io.mutex);
 
-	return true;
+#if GLIB_CHECK_VERSION(2,32,0)
+	io.thread = g_thread_new("io", io_thread_func, nullptr);
+#else
+	GError *error = nullptr;
+	io.thread = g_thread_create(io_thread_func, NULL, true, &error);
+	if (io.thread == NULL)
+		FatalError(error);
+#endif
 }
 
 void
@@ -110,54 +116,4 @@ bool
 io_thread_inside(void)
 {
 	return io.thread != NULL && g_thread_self() == io.thread;
-}
-
-struct call_data {
-	GThreadFunc function;
-	gpointer data;
-	bool done;
-	gpointer result;
-};
-
-static gboolean
-io_thread_call_func(gpointer _data)
-{
-	struct call_data *data = (struct call_data *)_data;
-
-	gpointer result = data->function(data->data);
-
-	io.mutex.lock();
-	data->done = true;
-	data->result = result;
-	io.cond.broadcast();
-	io.mutex.unlock();
-
-	return false;
-}
-
-gpointer
-io_thread_call(GThreadFunc function, gpointer _data)
-{
-	assert(io.thread != NULL);
-
-	if (io_thread_inside())
-		/* we're already in the I/O thread - no
-		   synchronization needed */
-		return function(_data);
-
-	struct call_data data = {
-		function,
-		_data,
-		false,
-		nullptr,
-	};
-
-	io.loop->AddIdle(io_thread_call_func, &data);
-
-	io.mutex.lock();
-	while (!data.done)
-		io.cond.wait(io.mutex);
-	io.mutex.unlock();
-
-	return data.result;
 }

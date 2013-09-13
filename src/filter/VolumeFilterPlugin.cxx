@@ -22,10 +22,13 @@
 #include "FilterPlugin.hxx"
 #include "FilterInternal.hxx"
 #include "FilterRegistry.hxx"
-#include "conf.h"
-#include "pcm_buffer.h"
-#include "PcmVolume.hxx"
-#include "audio_format.h"
+#include "pcm/PcmVolume.hxx"
+#include "pcm/PcmBuffer.hxx"
+#include "AudioFormat.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
+
+#include <glib.h>
 
 #include <assert.h>
 #include <string.h>
@@ -36,9 +39,9 @@ class VolumeFilter final : public Filter {
 	 */
 	unsigned volume;
 
-	struct audio_format format;
+	AudioFormat format;
 
-	struct pcm_buffer buffer;
+	PcmBuffer buffer;
 
 public:
 	VolumeFilter()
@@ -56,43 +59,38 @@ public:
 		volume = _volume;
 	}
 
-	virtual const audio_format *Open(audio_format &af, GError **error_r);
+	virtual AudioFormat Open(AudioFormat &af, Error &error) override;
 	virtual void Close();
 	virtual const void *FilterPCM(const void *src, size_t src_size,
-				      size_t *dest_size_r, GError **error_r);
+				      size_t *dest_size_r, Error &error);
 };
 
-static inline GQuark
-volume_quark(void)
-{
-	return g_quark_from_static_string("pcm_volume");
-}
+static constexpr Domain volume_domain("pcm_volume");
 
 static Filter *
-volume_filter_init(gcc_unused const struct config_param *param,
-		   gcc_unused GError **error_r)
+volume_filter_init(gcc_unused const config_param &param,
+		   gcc_unused Error &error)
 {
 	return new VolumeFilter();
 }
 
-const struct audio_format *
-VolumeFilter::Open(audio_format &audio_format, gcc_unused GError **error_r)
+AudioFormat
+VolumeFilter::Open(AudioFormat &audio_format, gcc_unused Error &error)
 {
 	format = audio_format;
-	pcm_buffer_init(&buffer);
 
-	return &format;
+	return format;
 }
 
 void
 VolumeFilter::Close()
 {
-	pcm_buffer_deinit(&buffer);
+	buffer.Clear();
 }
 
 const void *
 VolumeFilter::FilterPCM(const void *src, size_t src_size,
-			size_t *dest_size_r, GError **error_r)
+			size_t *dest_size_r, Error &error)
 {
 	*dest_size_r = src_size;
 
@@ -100,7 +98,7 @@ VolumeFilter::FilterPCM(const void *src, size_t src_size,
 		/* optimized special case: 100% volume = no-op */
 		return src;
 
-	void *dest = pcm_buffer_get(&buffer, src_size);
+	void *dest = buffer.Get(src_size);
 
 	if (volume <= 0) {
 		/* optimized special case: 0% volume = memset(0) */
@@ -113,11 +111,10 @@ VolumeFilter::FilterPCM(const void *src, size_t src_size,
 	memcpy(dest, src, src_size);
 
 	bool success = pcm_volume(dest, src_size,
-				  sample_format(format.format),
+				  format.format,
 				  volume);
 	if (!success) {
-		g_set_error(error_r, volume_quark(), 0,
-			    "pcm_volume() has failed");
+		error.Set(volume_domain, "pcm_volume() has failed");
 		return NULL;
 	}
 

@@ -22,33 +22,23 @@
 #include "InputRegistry.hxx"
 #include "InputPlugin.hxx"
 #include "input/RewindInputPlugin.hxx"
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
-extern "C" {
-#include "uri.h"
-}
-
-#include <glib.h>
 #include <assert.h>
 
-static inline GQuark
-input_quark(void)
-{
-	return g_quark_from_static_string("input");
-}
+static constexpr Domain input_domain("input");
 
 struct input_stream *
-input_stream_open(const char *url,
-		  Mutex &mutex, Cond &cond,
-		  GError **error_r)
+input_stream::Open(const char *url,
+		   Mutex &mutex, Cond &cond,
+		   Error &error)
 {
-	GError *error = NULL;
-
-	assert(error_r == NULL || *error_r == NULL);
-
 	input_plugins_for_each_enabled(plugin) {
 		struct input_stream *is;
 
-		is = plugin->open(url, mutex, cond, &error);
+		is = plugin->open(url, mutex, cond, error);
 		if (is != NULL) {
 			assert(is->plugin.close != NULL);
 			assert(is->plugin.read != NULL);
@@ -58,202 +48,132 @@ input_stream_open(const char *url,
 			is = input_rewind_open(is);
 
 			return is;
-		} else if (error != NULL) {
-			g_propagate_error(error_r, error);
+		} else if (error.IsDefined())
 			return NULL;
-		}
 	}
 
-	g_set_error(error_r, input_quark(), 0, "Unrecognized URI");
+	error.Set(input_domain, "Unrecognized URI");
 	return NULL;
 }
 
 bool
-input_stream_check(struct input_stream *is, GError **error_r)
+input_stream::Check(Error &error)
 {
-	assert(is != NULL);
-
-	return is->plugin.check == NULL ||
-		is->plugin.check(is, error_r);
+	return plugin.check == nullptr || plugin.check(this, error);
 }
 
 void
-input_stream_update(struct input_stream *is)
+input_stream::Update()
 {
-	assert(is != NULL);
-
-	if (is->plugin.update != NULL)
-		is->plugin.update(is);
+	if (plugin.update != nullptr)
+		plugin.update(this);
 }
 
 void
-input_stream_wait_ready(struct input_stream *is)
+input_stream::WaitReady()
 {
-	assert(is != NULL);
-
 	while (true) {
-		input_stream_update(is);
-		if (is->ready)
+		Update();
+		if (ready)
 			break;
 
-		is->cond.wait(is->mutex);
+		cond.wait(mutex);
 	}
 }
 
 void
-input_stream_lock_wait_ready(struct input_stream *is)
+input_stream::LockWaitReady()
 {
-	assert(is != NULL);
-
-	const ScopeLock protect(is->mutex);
-	input_stream_wait_ready(is);
-}
-
-const char *
-input_stream_get_mime_type(const struct input_stream *is)
-{
-	assert(is != NULL);
-	assert(is->ready);
-
-	return is->mime.empty() ? nullptr : is->mime.c_str();
-}
-
-void
-input_stream_override_mime_type(struct input_stream *is, const char *mime)
-{
-	assert(is != NULL);
-	assert(is->ready);
-
-	is->mime = mime;
-}
-
-goffset
-input_stream_get_size(const struct input_stream *is)
-{
-	assert(is != NULL);
-	assert(is->ready);
-
-	return is->size;
-}
-
-goffset
-input_stream_get_offset(const struct input_stream *is)
-{
-	assert(is != NULL);
-	assert(is->ready);
-
-	return is->offset;
+	const ScopeLock protect(mutex);
+	WaitReady();
 }
 
 bool
-input_stream_is_seekable(const struct input_stream *is)
+input_stream::CheapSeeking() const
 {
-	assert(is != NULL);
-	assert(is->ready);
-
-	return is->seekable;
+	return IsSeekable() && !uri_has_scheme(uri.c_str());
 }
 
 bool
-input_stream_cheap_seeking(const struct input_stream *is)
+input_stream::Seek(goffset _offset, int whence, Error &error)
 {
-	return is->seekable && !uri_has_scheme(is->uri.c_str());
-}
-
-bool
-input_stream_seek(struct input_stream *is, goffset offset, int whence,
-		  GError **error_r)
-{
-	assert(is != NULL);
-
-	if (is->plugin.seek == NULL)
+	if (plugin.seek == nullptr)
 		return false;
 
-	return is->plugin.seek(is, offset, whence, error_r);
+	return plugin.seek(this, _offset, whence, error);
 }
 
 bool
-input_stream_lock_seek(struct input_stream *is, goffset offset, int whence,
-		       GError **error_r)
+input_stream::LockSeek(goffset _offset, int whence, Error &error)
 {
-	assert(is != NULL);
-
-	if (is->plugin.seek == NULL)
+	if (plugin.seek == nullptr)
 		return false;
 
-	const ScopeLock protect(is->mutex);
-	return input_stream_seek(is, offset, whence, error_r);
+	const ScopeLock protect(mutex);
+	return Seek(_offset, whence, error);
 }
 
-struct tag *
-input_stream_tag(struct input_stream *is)
+Tag *
+input_stream::ReadTag()
 {
-	assert(is != NULL);
-
-	return is->plugin.tag != NULL
-		? is->plugin.tag(is)
-		: NULL;
+	return plugin.tag != nullptr
+		? plugin.tag(this)
+		: nullptr;
 }
 
-struct tag *
-input_stream_lock_tag(struct input_stream *is)
+Tag *
+input_stream::LockReadTag()
 {
-	assert(is != NULL);
-
-	if (is->plugin.tag == NULL)
+	if (plugin.tag == nullptr)
 		return nullptr;
 
-	const ScopeLock protect(is->mutex);
-	return input_stream_tag(is);
+	const ScopeLock protect(mutex);
+	return ReadTag();
 }
 
 bool
-input_stream_available(struct input_stream *is)
+input_stream::IsAvailable()
 {
-	assert(is != NULL);
-
-	return is->plugin.available != NULL
-		? is->plugin.available(is)
+	return plugin.available != nullptr
+		? plugin.available(this)
 		: true;
 }
 
 size_t
-input_stream_read(struct input_stream *is, void *ptr, size_t size,
-		  GError **error_r)
+input_stream::Read(void *ptr, size_t _size, Error &error)
 {
 	assert(ptr != NULL);
-	assert(size > 0);
+	assert(_size > 0);
 
-	return is->plugin.read(is, ptr, size, error_r);
+	return plugin.read(this, ptr, _size, error);
 }
 
 size_t
-input_stream_lock_read(struct input_stream *is, void *ptr, size_t size,
-		       GError **error_r)
+input_stream::LockRead(void *ptr, size_t _size, Error &error)
 {
 	assert(ptr != NULL);
-	assert(size > 0);
+	assert(_size > 0);
 
-	const ScopeLock protect(is->mutex);
-	return input_stream_read(is, ptr, size, error_r);
+	const ScopeLock protect(mutex);
+	return Read(ptr, _size, error);
 }
 
-void input_stream_close(struct input_stream *is)
+void
+input_stream::Close()
 {
-	is->plugin.close(is);
-}
-
-bool input_stream_eof(struct input_stream *is)
-{
-	return is->plugin.eof(is);
+	plugin.close(this);
 }
 
 bool
-input_stream_lock_eof(struct input_stream *is)
+input_stream::IsEOF()
 {
-	assert(is != NULL);
+	return plugin.eof(this);
+}
 
-	const ScopeLock protect(is->mutex);
-	return input_stream_eof(is);
+bool
+input_stream::LockIsEOF()
+{
+	const ScopeLock protect(mutex);
+	return IsEOF();
 }
 

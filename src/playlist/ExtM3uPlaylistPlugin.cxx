@@ -20,51 +20,47 @@
 #include "config.h"
 #include "ExtM3uPlaylistPlugin.hxx"
 #include "PlaylistPlugin.hxx"
-#include "song.h"
-#include "tag.h"
-#include "string_util.h"
-
-extern "C" {
-#include "text_input_stream.h"
-}
+#include "SongEnumerator.hxx"
+#include "Song.hxx"
+#include "tag/Tag.hxx"
+#include "util/StringUtil.hxx"
+#include "TextInputStream.hxx"
 
 #include <glib.h>
 
 #include <string.h>
 #include <stdlib.h>
 
-struct ExtM3uPlaylist {
-	struct playlist_provider base;
+class ExtM3uPlaylist final : public SongEnumerator {
+	TextInputStream tis;
 
-	struct text_input_stream *tis;
+public:
+	ExtM3uPlaylist(input_stream *is)
+		:tis(is) {
+	}
+
+	bool CheckFirstLine() {
+		std::string line;
+		return tis.ReadLine(line) &&
+			strcmp(line.c_str(), "#EXTM3U") == 0;
+	}
+
+	virtual Song *NextSong() override;
 };
 
-static struct playlist_provider *
+static SongEnumerator *
 extm3u_open_stream(struct input_stream *is)
 {
-	ExtM3uPlaylist *playlist = g_new(ExtM3uPlaylist, 1);
-	playlist->tis = text_input_stream_new(is);
+	ExtM3uPlaylist *playlist = new ExtM3uPlaylist(is);
 
-	const char *line = text_input_stream_read(playlist->tis);
-	if (line == NULL || strcmp(line, "#EXTM3U") != 0) {
+	if (!playlist->CheckFirstLine()) {
 		/* no EXTM3U header: fall back to the plain m3u
 		   plugin */
-		text_input_stream_free(playlist->tis);
-		g_free(playlist);
+		delete playlist;
 		return NULL;
 	}
 
-	playlist_provider_init(&playlist->base, &extm3u_playlist_plugin);
-	return &playlist->base;
-}
-
-static void
-extm3u_close(struct playlist_provider *_playlist)
-{
-	ExtM3uPlaylist *playlist = (ExtM3uPlaylist *)_playlist;
-
-	text_input_stream_free(playlist->tis);
-	g_free(playlist);
+	return playlist;
 }
 
 /**
@@ -72,13 +68,13 @@ extm3u_close(struct playlist_provider *_playlist)
  *
  * @param line the rest of the input line after the colon
  */
-static struct tag *
+static Tag *
 extm3u_parse_tag(const char *line)
 {
 	long duration;
 	char *endptr;
 	const char *name;
-	struct tag *tag;
+	Tag *tag;
 
 	duration = strtol(line, &endptr, 10);
 	if (endptr[0] != ',')
@@ -95,46 +91,45 @@ extm3u_parse_tag(const char *line)
 		   object */
 		return NULL;
 
-	tag = tag_new();
+	tag = new Tag();
 	tag->time = duration;
 
 	/* unfortunately, there is no real specification for the
 	   EXTM3U format, so we must assume that the string after the
 	   comma is opaque, and is just the song name*/
 	if (*name != 0)
-		tag_add_item(tag, TAG_NAME, name);
+		tag->AddItem(TAG_NAME, name);
 
 	return tag;
 }
 
-static struct song *
-extm3u_read(struct playlist_provider *_playlist)
+Song *
+ExtM3uPlaylist::NextSong()
 {
-	ExtM3uPlaylist *playlist = (ExtM3uPlaylist *)_playlist;
-	struct tag *tag = NULL;
-	const char *line;
-	struct song *song;
+	Tag *tag = NULL;
+	std::string line;
+	const char *line_s;
+	Song *song;
 
 	do {
-		line = text_input_stream_read(playlist->tis);
-		if (line == NULL) {
-			if (tag != NULL)
-				tag_free(tag);
+		if (!tis.ReadLine(line)) {
+			delete tag;
 			return NULL;
 		}
+		
+		line_s = line.c_str();
 
-		if (g_str_has_prefix(line, "#EXTINF:")) {
-			if (tag != NULL)
-				tag_free(tag);
-			tag = extm3u_parse_tag(line + 8);
+		if (g_str_has_prefix(line_s, "#EXTINF:")) {
+			delete tag;
+			tag = extm3u_parse_tag(line_s + 8);
 			continue;
 		}
 
-		while (*line != 0 && g_ascii_isspace(*line))
-			++line;
-	} while (line[0] == '#' || *line == 0);
+		while (*line_s != 0 && g_ascii_isspace(*line_s))
+			++line_s;
+	} while (line_s[0] == '#' || *line_s == 0);
 
-	song = song_remote_new(line);
+	song = Song::NewRemote(line_s);
 	song->tag = tag;
 	return song;
 }
@@ -156,8 +151,6 @@ const struct playlist_plugin extm3u_playlist_plugin = {
 	nullptr,
 	nullptr,
 	extm3u_open_stream,
-	extm3u_close,
-	extm3u_read,
 
 	nullptr,
 	extm3u_suffixes,

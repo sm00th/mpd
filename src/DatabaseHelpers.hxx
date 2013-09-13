@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003-2012 The Music Player Daemon Project
+ * Copyright (C) 2003-2013 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,9 +21,10 @@
 #define MPD_MEMORY_DATABASE_PLUGIN_HXX
 
 #include "DatabaseVisitor.hxx"
-#include "tag.h"
+#include "tag/TagType.h"
 #include "gcc.h"
 
+class Error;
 class Database;
 struct DatabaseSelection;
 struct DatabaseStats;
@@ -32,10 +33,10 @@ bool
 VisitUniqueTags(const Database &db, const DatabaseSelection &selection,
 		enum tag_type tag_type,
 		VisitString visit_string,
-		GError **error_r);
+		Error &error);
 
 bool
 GetStats(const Database &db, const DatabaseSelection &selection,
-	 DatabaseStats &stats, GError **error_r);
+	 DatabaseStats &stats, Error &error);
 
 #endif

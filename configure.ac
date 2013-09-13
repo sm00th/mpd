@@ -8,12 +8,12 @@ VERSION_REVISION=0
 VERSION_EXTRA=0
 
 AC_CONFIG_SRCDIR([src/Main.cxx])
-AM_INIT_AUTOMAKE([foreign 1.11 dist-bzip2 subdir-objects])
+AM_INIT_AUTOMAKE([foreign 1.11 dist-bzip2 dist-xz subdir-objects])
 AM_SILENT_RULES
 AC_CONFIG_HEADERS(config.h)
 AC_CONFIG_MACRO_DIR([m4])
 
-AC_DEFINE(PROTOCOL_VERSION, "0.17.0", [The MPD protocol version])
+AC_DEFINE(PROTOCOL_VERSION, "0.18.0", [The MPD protocol version])
 
 
 dnl ---------------------------------------------------------------------------
@@ -22,6 +22,11 @@ dnl ---------------------------------------------------------------------------
 AC_PROG_CC_C99
 AC_PROG_CXX
 AC_PROG_RANLIB
+
+AN_MAKEVAR([AR], [AC_PROG_AR])
+AN_PROGRAM([ar], [AC_PROG_AR])
+AC_DEFUN([AC_PROG_AR], [AC_CHECK_TOOL(AR, ar, :)])
+AC_PROG_AR
 
 AC_PROG_INSTALL
 AC_PROG_MAKE_SET
@@ -134,9 +139,10 @@ AC_SEARCH_LIBS([syslog], [bsd socket inet],
 AC_SEARCH_LIBS([socket], [socket])
 AC_SEARCH_LIBS([gethostbyname], [nsl])
 
-AC_CHECK_FUNCS(pipe2 accept4 eventfd)
-
-AC_CHECK_FUNCS(strnlen strndup)
+AC_CHECK_FUNCS(pipe2 accept4)
+MPD_OPTIONAL_FUNC(eventfd, eventfd, USE_EVENTFD)
+MPD_OPTIONAL_FUNC(signalfd, signalfd, USE_SIGNALFD)
+MPD_OPTIONAL_FUNC(epoll, epoll_create1, USE_EPOLL)
 
 AC_SEARCH_LIBS([exp], [m],,
 	[AC_MSG_ERROR([exp() not found])])
@@ -148,7 +154,7 @@ dnl ---------------------------------------------------------------------------
 dnl Allow tools to be specifically built
 dnl ---------------------------------------------------------------------------
 
-AC_ARG_ENABLE(mpdclient,
+AC_ARG_ENABLE(libmpdclient,
 	AS_HELP_STRING([--enable-libmpdclient],
 		[enable support for the MPD client]),,
 	enable_libmpdclient=auto)
@@ -192,11 +198,6 @@ AC_ARG_ENABLE(curl,
 		[enable support for libcurl HTTP streaming (default: auto)]),,
 	[enable_curl=auto])
 
-AC_ARG_ENABLE(soup,
-	AS_HELP_STRING([--enable-soup],
-		[enable support for libsoup HTTP streaming (default: auto)]),,
-	[enable_soup=auto])
-
 AC_ARG_ENABLE(debug,
 	AS_HELP_STRING([--enable-debug],
 		[enable debugging (default: disabled)]),,
@@ -206,10 +207,6 @@ AC_ARG_ENABLE(documentation,
 	AS_HELP_STRING([--enable-documentation],
 		[build documentation (default: disable)]),,
 	[enable_documentation=no])
-
-AC_ARG_ENABLE(ffado,
-	AS_HELP_STRING([--enable-ffado], [enable libffado (FireWire) support]),,
-	[enable_ffado=no])
 
 AC_ARG_ENABLE(ffmpeg,
 	AS_HELP_STRING([--enable-ffmpeg],
@@ -326,11 +323,6 @@ AC_ARG_ENABLE(mpg123,
 	AS_HELP_STRING([--enable-mpg123],
 		[enable libmpg123 decoder plugin]),,
 	enable_mpg123=auto)
-
-AC_ARG_ENABLE(mvp,
-	AS_HELP_STRING([--enable-mvp],
-		[enable support for Hauppauge Media MVP (default: disable)]),,
-	enable_mvp=no)
 
 AC_ARG_ENABLE(openal,
 	AS_HELP_STRING([--enable-openal],
@@ -727,14 +719,6 @@ if test x$enable_curl = xyes; then
 fi
 AM_CONDITIONAL(ENABLE_CURL, test x$enable_curl = xyes)
 
-dnl ----------------------------------- SOUP ----------------------------------
-MPD_AUTO_PKG(soup, SOUP, [libsoup-2.4],
-	[libsoup HTTP streaming], [libsoup not found])
-if test x$enable_soup = xyes; then
-	AC_DEFINE(ENABLE_SOUP, 1, [Define when libsoup is used for HTTP streaming])
-fi
-AM_CONDITIONAL(ENABLE_SOUP, test x$enable_soup = xyes)
-
 dnl --------------------------------- Last.FM ---------------------------------
 if test x$enable_lastfm = xyes; then
 	if test x$enable_curl != xyes; then
@@ -879,7 +863,7 @@ AM_PATH_FAAD()
 AM_CONDITIONAL(HAVE_FAAD, test x$enable_aac = xyes)
 
 dnl ---------------------------------- ffmpeg ---------------------------------
-MPD_AUTO_PKG(ffmpeg, FFMPEG, [libavformat >= 53.2 libavcodec >= 53.5 libavutil >= 51.7],
+MPD_AUTO_PKG(ffmpeg, FFMPEG, [libavformat >= 53.17 libavcodec >= 53.25 libavutil >= 51.17],
 	[ffmpeg decoder library], [libavformat+libavcodec+libavutil not found])
 
 if test x$enable_ffmpeg = xyes; then
@@ -995,16 +979,7 @@ if test x$enable_mpc = xyes; then
 	LIBS=$oldlibs
 	CPPFLAGS=$oldcppflags
 
-	if test x$enable_mpc = xyes; then
-		AC_CHECK_HEADER([mpc/mpcdec.h],
-			[AC_DEFINE(HAVE_MPCDEC,1,
-				[Define to use libmpcdec for MPC decoding])],
-			[AC_CHECK_HEADER(mpcdec/mpcdec.h,
-				[AC_DEFINE(MPC_IS_OLD_API, 1,
-				[Define if an old pre-SV8 libmpcdec is used])]
-				)]
-		)	
-	else
+	if test x$enable_mpc != xyes; then
 		AC_MSG_WARN([mpcdec lib needed for MPC support -- disabling MPC support])
 	fi
 fi
@@ -1299,17 +1274,6 @@ fi
 
 AM_CONDITIONAL(HAVE_ROAR, test x$enable_roar = xyes)
 
-dnl ----------------------------------- FFADO ---------------------------------
-
-MPD_AUTO_PKG(ffado, FFADO, [libffado],
-	[libffado output plugin], [libffado not found])
-
-if test x$enable_ffado = xyes; then
-	AC_DEFINE(ENABLE_FFADO_OUTPUT, 1, [Define to enable the libffado output plugin])
-fi
-
-AM_CONDITIONAL(ENABLE_FFADO_OUTPUT, test x$enable_ffado = xyes)
-
 dnl ----------------------------------- FIFO ----------------------------------
 if test x$enable_fifo = xyes; then
 	AC_CHECK_FUNC([mkfifo],
@@ -1364,13 +1328,6 @@ if test x$enable_ao = xyes; then
 fi
 
 AM_CONDITIONAL(HAVE_AO, test x$enable_ao = xyes)
-
-dnl ----------------------------------- MVP -----------------------------------
-if test x$enable_mvp = xyes; then
-   AC_DEFINE(HAVE_MVP,1,[Define to enable Hauppauge Media MVP support])
-fi
-
-AM_CONDITIONAL(HAVE_MVP, test x$enable_mvp = xyes)
 
 dnl ---------------------------------- OpenAL ---------------------------------
 AC_SUBST(OPENAL_CFLAGS,"")
@@ -1446,7 +1403,7 @@ fi
 AM_CONDITIONAL(ENABLE_PIPE_OUTPUT, test x$enable_pipe_output = xyes)
 
 dnl -------------------------------- PulseAudio -------------------------------
-MPD_AUTO_PKG(pulse, PULSE, [libpulse],
+MPD_AUTO_PKG(pulse, PULSE, [libpulse >= 0.9.16],
 	[PulseAudio output plugin], [libpulse not found])
 if test x$enable_pulse = xyes; then
 	AC_DEFINE([HAVE_PULSE], 1,
@@ -1530,11 +1487,9 @@ if
 	test x$enable_alsa = xno &&
 	test x$enable_roar = xno &&
 	test x$enable_ao = xno &&
-	test x$enable_ffado = xno &&
 	test x$enable_fifo = xno &&
 	test x$enable_httpd_output = xno &&
 	test x$enable_jack = xno &&
-	test x$enable_mvp = xno; then
 	test x$enable_openal = xno &&
 	test x$enable_rpi = xno &&
 	test x$enable_oss = xno &&
@@ -1544,7 +1499,7 @@ if
 	test x$enable_recorder_output = xno &&
 	test x$enable_shout = xno &&
 	test x$enable_solaris_output = xno &&
-	test x$enable_winmm_output = xno &&
+	test x$enable_winmm_output = xno; then
 
 		AC_MSG_ERROR([No Audio Output types configured!])
 fi
@@ -1686,14 +1641,12 @@ results(id3,[ID3])
 
 printf '\nPlayback support:\n\t'
 results(alsa,ALSA)
-results(ffado,FFADO)
 results(fifo,FIFO)
 results(recorder_output,[File Recorder])
 results(httpd_output,[HTTP Daemon])
 results(jack,[JACK])
 printf '\n\t'
 results(ao,[libao])
-results(mvp, [Media MVP])
 results(oss,[OSS])
 results(openal,[OpenAL])
 results(rpi,[RPi])
@@ -1727,7 +1680,6 @@ results(lastfm,[Last.FM])
 results(soundcloud,[Soundcloud])
 printf '\n\t'
 results(mms,[MMS])
-results(soup, [SOUP])
 
 printf '\n\n##########################################\n\n'
 

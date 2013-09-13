@@ -22,8 +22,9 @@
 
 #ifdef WIN32
 
-#include "mpd_error.h"
+#include "gcc.h"
 #include "GlobalEvents.hxx"
+#include "system/FatalError.hxx"
 
 #include <cstdlib>
 #include <atomic>
@@ -65,8 +66,8 @@ service_notify_status(DWORD status_code)
 }
 
 static DWORD WINAPI
-service_dispatcher(G_GNUC_UNUSED DWORD control, G_GNUC_UNUSED DWORD event_type,
-		   G_GNUC_UNUSED void *event_data, G_GNUC_UNUSED void *context)
+service_dispatcher(gcc_unused DWORD control, gcc_unused DWORD event_type,
+		   gcc_unused void *event_data, gcc_unused void *context)
 {
 	switch (control) {
 	case SERVICE_CONTROL_SHUTDOWN:
@@ -79,7 +80,7 @@ service_dispatcher(G_GNUC_UNUSED DWORD control, G_GNUC_UNUSED DWORD event_type,
 }
 
 static void WINAPI
-service_main(G_GNUC_UNUSED DWORD argc, G_GNUC_UNUSED CHAR *argv[])
+service_main(gcc_unused DWORD argc, gcc_unused CHAR *argv[])
 {
 	DWORD error_code;
 	gchar* error_message;
@@ -91,8 +92,8 @@ service_main(G_GNUC_UNUSED DWORD argc, G_GNUC_UNUSED CHAR *argv[])
 	if (service_handle == 0) {
 		error_code = GetLastError();
 		error_message = g_win32_error_message(error_code);
-		MPD_ERROR("RegisterServiceCtrlHandlerEx() failed: %s",
-			  error_message);
+		FormatFatalError("RegisterServiceCtrlHandlerEx() failed: %s",
+				 error_message);
 	}
 
 	service_notify_status(SERVICE_START_PENDING);
@@ -149,7 +150,8 @@ int win32_main(int argc, char *argv[])
 	}
 
 	error_message = g_win32_error_message(error_code);
-	MPD_ERROR("StartServiceCtrlDispatcher() failed: %s", error_message);
+	FormatFatalError("StartServiceCtrlDispatcher() failed: %s",
+			 error_message);
 }
 
 void win32_app_started()

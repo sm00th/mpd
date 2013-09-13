@@ -20,8 +20,7 @@
 #include "config.h"
 #include "CrossFade.hxx"
 #include "MusicChunk.hxx"
-#include "audio_format.h"
-#include "tag.h"
+#include "AudioFormat.hxx"
 
 #include <cmath>
 
@@ -35,7 +34,7 @@
 
 #ifdef G_OS_WIN32
 static char *
-strtok_r(char *str, const char *delim, G_GNUC_UNUSED char **saveptr)
+strtok_r(char *str, const char *delim, gcc_unused char **saveptr)
 {
 	return strtok(str, delim);
 }
@@ -97,8 +96,8 @@ unsigned cross_fade_calc(float duration, float total_time,
 			 float mixramp_db, float mixramp_delay,
 			 float replay_gain_db, float replay_gain_prev_db,
 			 char *mixramp_start, char *mixramp_prev_end,
-			 const struct audio_format *af,
-			 const struct audio_format *old_format,
+			 const AudioFormat af,
+			 const AudioFormat old_format,
 			 unsigned max_chunks)
 {
 	unsigned int chunks = 0;
@@ -107,13 +106,13 @@ unsigned cross_fade_calc(float duration, float total_time,
 
 	if (duration < 0 || duration >= total_time ||
 	    /* we can't crossfade when the audio formats are different */
-	    !audio_format_equals(af, old_format))
+	    af != old_format)
 		return 0;
 
 	assert(duration >= 0);
-	assert(audio_format_valid(af));
+	assert(af.IsValid());
 
-	chunks_f = (float)audio_format_time_to_size(af) / (float)CHUNK_SIZE;
+	chunks_f = (float)af.GetTimeToSize() / (float)CHUNK_SIZE;
 
 	if (std::isnan(mixramp_delay) || !mixramp_start || !mixramp_prev_end) {
 		chunks = (chunks_f * duration + 0.5);

@@ -19,8 +19,8 @@
 
 #include "DatabaseHelpers.hxx"
 #include "DatabasePlugin.hxx"
-#include "song.h"
-#include "tag.h"
+#include "Song.hxx"
+#include "tag/Tag.hxx"
 
 #include <functional>
 #include <set>
@@ -37,9 +37,9 @@ struct StringLess {
 typedef std::set<const char *, StringLess> StringSet;
 
 static bool
-CollectTags(StringSet &set, enum tag_type tag_type, song &song)
+CollectTags(StringSet &set, enum tag_type tag_type, Song &song)
 {
-	struct tag *tag = song.tag;
+	Tag *tag = song.tag;
 	if (tag == nullptr)
 		return true;
 
@@ -61,17 +61,17 @@ bool
 VisitUniqueTags(const Database &db, const DatabaseSelection &selection,
 		enum tag_type tag_type,
 		VisitString visit_string,
-		GError **error_r)
+		Error &error)
 {
 	StringSet set;
 
 	using namespace std::placeholders;
 	const auto f = std::bind(CollectTags, std::ref(set), tag_type, _1);
-	if (!db.Visit(selection, f, error_r))
+	if (!db.Visit(selection, f, error))
 		return false;
 
 	for (auto value : set)
-		if (!visit_string(value, error_r))
+		if (!visit_string(value, error))
 			return false;
 
 	return true;
@@ -79,13 +79,13 @@ VisitUniqueTags(const Database &db, const DatabaseSelection &selection,
 
 static void
 StatsVisitTag(DatabaseStats &stats, StringSet &artists, StringSet &albums,
-	      const struct tag &tag)
+	      const Tag &tag)
 {
 	if (tag.time > 0)
 		stats.total_duration += tag.time;
 
 	for (unsigned i = 0; i < tag.num_items; ++i) {
-		const struct tag_item &item = *tag.items[i];
+		const TagItem &item = *tag.items[i];
 
 		switch (item.type) {
 		case TAG_ARTIST:
@@ -104,7 +104,7 @@ StatsVisitTag(DatabaseStats &stats, StringSet &artists, StringSet &albums,
 
 static bool
 StatsVisitSong(DatabaseStats &stats, StringSet &artists, StringSet &albums,
-	       song &song)
+	       Song &song)
 {
 	++stats.song_count;
 
@@ -116,7 +116,7 @@ StatsVisitSong(DatabaseStats &stats, StringSet &artists, StringSet &albums,
 
 bool
 GetStats(const Database &db, const DatabaseSelection &selection,
-	 DatabaseStats &stats, GError **error_r)
+	 DatabaseStats &stats, Error &error)
 {
 	stats.Clear();
 
@@ -125,7 +125,7 @@ GetStats(const Database &db, const DatabaseSelection &selection,
 	const auto f = std::bind(StatsVisitSong,
 				 std::ref(stats), std::ref(artists),
 				 std::ref(albums), _1);
-	if (!db.Visit(selection, f, error_r))
+	if (!db.Visit(selection, f, error))
 		return false;
 
 	stats.artist_count = artists.size();

@@ -19,14 +19,11 @@
 
 #include "config.h"
 #include "TagFile.hxx"
-
-extern "C" {
-#include "uri.h"
-}
-
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
 #include "DecoderList.hxx"
-#include "decoder_plugin.h"
-#include "input_stream.h"
+#include "DecoderPlugin.hxx"
+#include "InputStream.hxx"
 
 #include <assert.h>
 #include <unistd.h> /* for SEEK_SET */
@@ -63,9 +60,11 @@ tag_file_scan(const char *path_fs,
 		if (plugin->scan_stream != NULL) {
 			/* open the input_stream (if not already
 			   open) */
-			if (is == nullptr)
-				is = input_stream_open(path_fs, mutex, cond,
-						       NULL);
+			if (is == nullptr) {
+				Error error;
+				is = input_stream::Open(path_fs, mutex, cond,
+							error);
+			}
 
 			/* now try the stream_tag() method */
 			if (is != NULL) {
@@ -74,7 +73,7 @@ tag_file_scan(const char *path_fs,
 							       handler_ctx))
 					break;
 
-				input_stream_lock_seek(is, 0, SEEK_SET, NULL);
+				is->LockSeek(0, SEEK_SET, IgnoreError());
 			}
 		}
 
@@ -82,7 +81,7 @@ tag_file_scan(const char *path_fs,
 	} while (plugin != NULL);
 
 	if (is != NULL)
-		input_stream_close(is);
+		is->Close();
 
 	return plugin != NULL;
 }

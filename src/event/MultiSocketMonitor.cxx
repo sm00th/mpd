@@ -20,10 +20,52 @@
 #include "config.h"
 #include "MultiSocketMonitor.hxx"
 #include "Loop.hxx"
-#include "fd_util.h"
+#include "system/fd_util.h"
 #include "gcc.h"
 
 #include <assert.h>
+
+#ifdef USE_EPOLL
+
+MultiSocketMonitor::MultiSocketMonitor(EventLoop &_loop)
+	:IdleMonitor(_loop), TimeoutMonitor(_loop), ready(false) {
+}
+
+MultiSocketMonitor::~MultiSocketMonitor()
+{
+	// TODO
+}
+
+void
+MultiSocketMonitor::Prepare()
+{
+	int timeout_ms = PrepareSockets();
+	if (timeout_ms >= 0)
+		TimeoutMonitor::Schedule(timeout_ms);
+	else
+		TimeoutMonitor::Cancel();
+
+}
+
+void
+MultiSocketMonitor::OnIdle()
+{
+	if (ready) {
+		ready = false;
+		DispatchSockets();
+
+		/* TODO: don't refresh always; require users to call
+		   InvalidateSockets() */
+		refresh = true;
+	}
+
+	if (refresh) {
+		refresh = false;
+		Prepare();
+	}
+}
+
+#else
 
 /**
  * The vtable for our GSource implementation.  Unfortunately, we
@@ -42,7 +84,8 @@ static GSourceFuncs multi_socket_monitor_source_funcs = {
 MultiSocketMonitor::MultiSocketMonitor(EventLoop &_loop)
 	:loop(_loop),
 	 source((Source *)g_source_new(&multi_socket_monitor_source_funcs,
-				       sizeof(*source))) {
+				       sizeof(*source))),
+	 absolute_timeout_us(-1) {
 	source->monitor = this;
 
 	g_source_attach(&source->base, loop.GetContext());
@@ -56,13 +99,24 @@ MultiSocketMonitor::~MultiSocketMonitor()
 }
 
 bool
+MultiSocketMonitor::Prepare(gint *timeout_r)
+{
+	int timeout_ms = *timeout_r = PrepareSockets();
+	absolute_timeout_us = timeout_ms < 0
+		? uint64_t(-1)
+		: GetTime() + uint64_t(timeout_ms) * 1000;
+
+	return false;
+}
+
+bool
 MultiSocketMonitor::Check() const
 {
-	if (CheckSockets())
+	if (GetTime() >= absolute_timeout_us)
 		return true;
 
 	for (const auto &i : fds)
-		if (i.revents != 0)
+		if (i.GetReturnedEvents() != 0)
 			return true;
 
 	return false;
@@ -105,3 +159,5 @@ MultiSocketMonitor::Dispatch(GSource *_source,
 	monitor.Dispatch();
 	return true;
 }
+
+#endif

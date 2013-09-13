@@ -40,14 +40,17 @@
  */
 
 #include "config.h"
-#include "conf.h"
-#include "ConfigQuark.hxx"
-#include "audio_format.h"
-#include "audio_check.h"
+#include "ConfigError.hxx"
+#include "ConfigData.hxx"
+#include "AudioFormat.hxx"
+#include "CheckAudioFormat.hxx"
 #include "FilterPlugin.hxx"
 #include "FilterInternal.hxx"
 #include "FilterRegistry.hxx"
-#include "pcm_buffer.h"
+#include "pcm/PcmBuffer.hxx"
+#include "util/Error.hxx"
+
+#include <glib.h>
 
 #include <assert.h>
 #include <string.h>
@@ -79,12 +82,12 @@ class RouteFilter final : public Filter {
 	/**
 	 * The actual input format of our signal, once opened
 	 */
-	struct audio_format input_format;
+	AudioFormat input_format;
 
 	/**
 	 * The decided upon output format, once opened
 	 */
-	struct audio_format output_format;
+	AudioFormat output_format;
 
 	/**
 	 * The size, in bytes, of each multichannel frame in the
@@ -101,7 +104,7 @@ class RouteFilter final : public Filter {
 	/**
 	 * The output buffer used last time around, can be reused if the size doesn't differ.
 	 */
-	struct pcm_buffer output_buffer;
+	PcmBuffer output_buffer;
 
 public:
 	RouteFilter():sources(nullptr) {}
@@ -118,16 +121,16 @@ public:
 	 * @param filter a route_filter whose min_channels and sources[] to set
 	 * @return true on success, false on error
 	 */
-	bool Configure(const config_param *param, GError **error_r);
+	bool Configure(const config_param &param, Error &error);
 
-	virtual const audio_format *Open(audio_format &af, GError **error_r);
+	virtual AudioFormat Open(AudioFormat &af, Error &error) override;
 	virtual void Close();
 	virtual const void *FilterPCM(const void *src, size_t src_size,
-				      size_t *dest_size_r, GError **error_r);
+				      size_t *dest_size_r, Error &error);
 };
 
 bool
-RouteFilter::Configure(const config_param *param, GError **error_r) {
+RouteFilter::Configure(const config_param &param, Error &error) {
 
 	/* TODO:
 	 * With a more clever way of marking "don't copy to output N",
@@ -139,8 +142,7 @@ RouteFilter::Configure(const config_param *param, GError **error_r) {
 	int number_of_copies;
 
 	// A cowardly default, just passthrough stereo
-	const char *routes =
-		config_get_block_string(param, "routes", "0>0, 1>1");
+	const char *const routes = param.GetBlockValue("routes", "0>0, 1>1");
 
 	min_input_channels = 0;
 	min_output_channels = 0;
@@ -161,9 +163,9 @@ RouteFilter::Configure(const config_param *param, GError **error_r) {
 		// Split the a>b string into source and destination
 		sd = g_strsplit(tokens[c], ">", 2);
 		if (g_strv_length(sd) != 2) {
-			g_set_error(error_r, config_quark(), 1,
-				"Invalid copy around %d in routes spec: %s",
-				param->line, tokens[c]);
+			error.Format(config_domain,
+				     "Invalid copy around %d in routes spec: %s",
+				     param.line, tokens[c]);
 			g_strfreev(sd);
 			g_strfreev(tokens);
 			return false;
@@ -184,9 +186,9 @@ RouteFilter::Configure(const config_param *param, GError **error_r) {
 
 	if (!audio_valid_channel_count(min_output_channels)) {
 		g_strfreev(tokens);
-		g_set_error(error_r, audio_format_quark(), 0,
-			    "Invalid number of output channels requested: %d",
-			    min_output_channels);
+		error.Format(config_domain,
+			     "Invalid number of output channels requested: %d",
+			     min_output_channels);
 		return false;
 	}
 
@@ -208,9 +210,9 @@ RouteFilter::Configure(const config_param *param, GError **error_r) {
 		// Split the a>b string into source and destination
 		sd = g_strsplit(tokens[c], ">", 2);
 		if (g_strv_length(sd) != 2) {
-			g_set_error(error_r, config_quark(), 1,
-				"Invalid copy around %d in routes spec: %s",
-				param->line, tokens[c]);
+			error.Format(config_domain,
+				     "Invalid copy around %d in routes spec: %s",
+				     param.line, tokens[c]);
 			g_strfreev(sd);
 			g_strfreev(tokens);
 			return false;
@@ -230,10 +232,10 @@ RouteFilter::Configure(const config_param *param, GError **error_r) {
 }
 
 static Filter *
-route_filter_init(const config_param *param, GError **error_r)
+route_filter_init(const config_param &param, Error &error)
 {
 	RouteFilter *filter = new RouteFilter();
-	if (!filter->Configure(param, error_r)) {
+	if (!filter->Configure(param, error)) {
 		delete filter;
 		return nullptr;
 	}
@@ -241,12 +243,12 @@ route_filter_init(const config_param *param, GError **error_r)
 	return filter;
 }
 
-const struct audio_format *
-RouteFilter::Open(audio_format &audio_format, gcc_unused GError **error_r)
+AudioFormat
+RouteFilter::Open(AudioFormat &audio_format, gcc_unused Error &error)
 {
 	// Copy the input format for later reference
 	input_format = audio_format;
-	input_frame_size = audio_format_frame_size(&input_format);
+	input_frame_size = input_format.GetFrameSize();
 
 	// Decide on an output format which has enough channels,
 	// and is otherwise identical
@@ -254,40 +256,34 @@ RouteFilter::Open(audio_format &audio_format, gcc_unused GError **error_r)
 	output_format.channels = min_output_channels;
 
 	// Precalculate this simple value, to speed up allocation later
-	output_frame_size = audio_format_frame_size(&output_format);
+	output_frame_size = output_format.GetFrameSize();
 
-	// This buffer grows as needed
-	pcm_buffer_init(&output_buffer);
-
-	return &output_format;
+	return output_format;
 }
 
 void
 RouteFilter::Close()
 {
-	pcm_buffer_deinit(&output_buffer);
+	output_buffer.Clear();
 }
 
 const void *
 RouteFilter::FilterPCM(const void *src, size_t src_size,
-		       size_t *dest_size_r, gcc_unused GError **error_r)
+		       size_t *dest_size_r, gcc_unused Error &error)
 {
 	size_t number_of_frames = src_size / input_frame_size;
 
-	size_t bytes_per_frame_per_channel =
-		audio_format_sample_size(&input_format);
+	const size_t bytes_per_frame_per_channel = input_format.GetSampleSize();
 
 	// A moving pointer that always refers to channel 0 in the input, at the currently handled frame
 	const uint8_t *base_source = (const uint8_t *)src;
 
-	// A moving pointer that always refers to the currently filled channel of the currently handled frame, in the output
-	uint8_t *chan_destination;
-
 	// Grow our reusable buffer, if needed, and set the moving pointer
 	*dest_size_r = number_of_frames * output_frame_size;
-	chan_destination = (uint8_t *)
-		pcm_buffer_get(&output_buffer, *dest_size_r);
+	void *const result = output_buffer.Get(*dest_size_r);
 
+	// A moving pointer that always refers to the currently filled channel of the currently handled frame, in the output
+	uint8_t *chan_destination = (uint8_t *)result;
 
 	// Perform our copy operations, with N input channels and M output channels
 	for (unsigned int s=0; s<number_of_frames; ++s) {
@@ -320,7 +316,7 @@ RouteFilter::FilterPCM(const void *src, size_t src_size,
 	}
 
 	// Here it is, ladies and gentlemen! Rerouted data!
-	return (void *) output_buffer.buffer;
+	return result;
 }
 
 const struct filter_plugin route_filter_plugin = {

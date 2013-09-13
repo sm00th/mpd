@@ -1,12 +1,11 @@
 *.Plo
 *.Po
 *.a
-*.bz2
 *.d
-*.gz
 *.la
 *.lo
 *.o
+*.exe
 .deps
 .dirstamp
 Makefile
@@ -33,7 +32,6 @@ ltmain.sh
 missing
 mkinstalldirs
 mpd
-mpd.exe
 mpd.service
 stamp-h1
 tags
@@ -73,3 +71,8 @@ test/dump_text_file
 test/test_byte_reverse
 test/test_vorbis_encoder
 test/DumpDatabase
+
+/*.tar.gz
+/*.tar.bz2
+/*.tar.xz
+/mpd-*/

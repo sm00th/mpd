@@ -22,11 +22,13 @@
 #include "DatabasePlugin.hxx"
 #include "DatabaseSelection.hxx"
 #include "Directory.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "PlaylistVector.hxx"
-#include "conf.h"
-#include "tag.h"
+#include "ConfigGlobal.hxx"
+#include "ConfigData.hxx"
+#include "tag/TagConfig.hxx"
 #include "fs/Path.hxx"
+#include "util/Error.hxx"
 
 #include <iostream>
 using std::cout;
@@ -36,8 +38,8 @@ using std::endl;
 #include <stdlib.h>
 
 static void
-my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+my_log_func(const gchar *log_domain, gcc_unused GLogLevelFlags log_level,
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_domain != NULL)
 		g_printerr("%s: %s\n", log_domain, message);
@@ -46,14 +48,14 @@ my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
 }
 
 static bool
-DumpDirectory(const Directory &directory, GError **)
+DumpDirectory(const Directory &directory, Error &)
 {
 	cout << "D " << directory.path << endl;
 	return true;
 }
 
 static bool
-DumpSong(song &song, GError **)
+DumpSong(Song &song, Error &)
 {
 	cout << "S " << song.parent->path << "/" << song.uri << endl;
 	return true;
@@ -61,7 +63,7 @@ DumpSong(song &song, GError **)
 
 static bool
 DumpPlaylist(const PlaylistInfo &playlist,
-	     const Directory &directory, GError **)
+	     const Directory &directory, Error &)
 {
 	cout << "P " << directory.path << "/" << playlist.name.c_str() << endl;
 	return true;
@@ -70,8 +72,6 @@ DumpPlaylist(const PlaylistInfo &playlist,
 int
 main(int argc, char **argv)
 {
-	GError *error = nullptr;
-
 	if (argc != 3) {
 		cerr << "Usage: DumpDatabase CONFIG PLUGIN" << endl;
 		return 1;
@@ -88,20 +88,23 @@ main(int argc, char **argv)
 
 	/* initialize GLib */
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(nullptr);
+#endif
+
 	g_log_set_default_handler(my_log_func, nullptr);
 
 	/* initialize MPD */
 
 	config_global_init();
 
-	if (!ReadConfigFile(config_path, &error)) {
-		cerr << error->message << endl;
-		g_error_free(error);
+	Error error;
+	if (!ReadConfigFile(config_path, error)) {
+		cerr << error.GetMessage() << endl;
 		return EXIT_FAILURE;
 	}
 
-	tag_lib_init();
+	TagLoadConfig();
 
 	/* do it */
 
@@ -110,29 +113,26 @@ main(int argc, char **argv)
 	if (path != nullptr)
 		param.AddBlockParam("path", path->value, path->line);
 
-	Database *db = plugin->create(&param, &error);
+	Database *db = plugin->create(param, error);
 
 	if (db == nullptr) {
-		cerr << error->message << endl;
-		g_error_free(error);
+		cerr << error.GetMessage() << endl;
 		return EXIT_FAILURE;
 	}
 
-	if (!db->Open(&error)) {
+	if (!db->Open(error)) {
 		delete db;
-		cerr << error->message << endl;
-		g_error_free(error);
+		cerr << error.GetMessage() << endl;
 		return EXIT_FAILURE;
 	}
 
 	const DatabaseSelection selection("", true);
 
 	if (!db->Visit(selection, DumpDirectory, DumpSong, DumpPlaylist,
-		       &error)) {
+		       error)) {
 		db->Close();
 		delete db;
-		cerr << error->message << endl;
-		g_error_free(error);
+		cerr << error.GetMessage() << endl;
 		return EXIT_FAILURE;
 	}
 

@@ -22,15 +22,13 @@
 
 #include "gcc.h"
 
-#include <glib.h>
-
 class EventLoop;
 
 void
 io_thread_init(void);
 
-bool
-io_thread_start(GError **error_r);
+void
+io_thread_start();
 
 /**
  * Run the I/O event loop synchronously in the current thread.  This
@@ -61,11 +59,5 @@ io_thread_get();
 gcc_pure
 bool
 io_thread_inside(void);
-
-/**
- * Call a function synchronously in the I/O thread.
- */
-gpointer
-io_thread_call(GThreadFunc function, gpointer data);
 
 #endif

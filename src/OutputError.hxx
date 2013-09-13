@@ -20,16 +20,6 @@
 #ifndef MPD_OUTPUT_ERROR_HXX
 #define MPD_OUTPUT_ERROR_HXX
 
-#include <glib.h>
-
-/**
- * Quark for GError.domain.
- */
-G_GNUC_CONST
-static inline GQuark
-output_quark(void)
-{
-	return g_quark_from_static_string("output");
-}
+extern const class Domain output_domain;
 
 #endif

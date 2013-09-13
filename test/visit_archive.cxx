@@ -19,8 +19,8 @@
 
 #include "config.h"
 #include "stdbin.h"
-#include "tag.h"
-#include "conf.h"
+#include "tag/Tag.hxx"
+#include "ConfigGlobal.hxx"
 #include "IOThread.hxx"
 #include "InputInit.hxx"
 #include "ArchiveList.hxx"
@@ -28,6 +28,7 @@
 #include "ArchiveFile.hxx"
 #include "ArchiveVisitor.hxx"
 #include "fs/Path.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
@@ -35,8 +36,8 @@
 #include <stdlib.h>
 
 static void
-my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+my_log_func(const gchar *log_domain, gcc_unused GLogLevelFlags log_level,
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_domain != NULL)
 		g_printerr("%s: %s\n", log_domain, message);
@@ -54,7 +55,7 @@ class MyArchiveVisitor final : public ArchiveVisitor {
 int
 main(int argc, char **argv)
 {
-	GError *error = nullptr;
+	Error error;
 
 	if (argc != 3) {
 		fprintf(stderr, "Usage: visit_archive PLUGIN PATH\n");
@@ -66,7 +67,10 @@ main(int argc, char **argv)
 
 	/* initialize GLib */
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
+#endif
+
 	g_log_set_default_handler(my_log_func, NULL);
 
 	/* initialize MPD */
@@ -74,17 +78,12 @@ main(int argc, char **argv)
 	config_global_init();
 
 	io_thread_init();
-	if (!io_thread_start(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		return EXIT_FAILURE;
-	}
+	io_thread_start();
 
 	archive_plugin_init_all();
 
-	if (!input_stream_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!input_stream_global_init(error)) {
+		fprintf(stderr, "%s", error.GetMessage());
 		return 2;
 	}
 
@@ -98,14 +97,13 @@ main(int argc, char **argv)
 
 	int result = EXIT_SUCCESS;
 
-	ArchiveFile *file = archive_file_open(plugin, path.c_str(), &error);
+	ArchiveFile *file = archive_file_open(plugin, path.c_str(), error);
 	if (file != nullptr) {
 		MyArchiveVisitor visitor;
 		file->Visit(visitor);
 		file->Close();
 	} else {
-		fprintf(stderr, "%s\n", error->message);
-		g_error_free(error);
+		fprintf(stderr, "%s", error.GetMessage());
 		result = EXIT_FAILURE;
 	}
 

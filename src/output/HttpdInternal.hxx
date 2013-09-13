@@ -25,18 +25,21 @@
 #ifndef MPD_OUTPUT_HTTPD_INTERNAL_H
 #define MPD_OUTPUT_HTTPD_INTERNAL_H
 
-#include "output_internal.h"
-#include "timer.h"
+#include "OutputInternal.hxx"
+#include "Timer.hxx"
 #include "thread/Mutex.hxx"
 #include "event/ServerSocket.hxx"
 
 #include <forward_list>
 
 struct config_param;
+class Error;
 class EventLoop;
 class ServerSocket;
 class HttpdClient;
 class Page;
+struct Encoder;
+struct Tag;
 
 struct HttpdOutput final : private ServerSocket {
 	struct audio_output base;
@@ -50,7 +53,7 @@ struct HttpdOutput final : private ServerSocket {
 	/**
 	 * The configured encoder plugin.
 	 */
-	struct encoder *encoder;
+	Encoder *encoder;
 
 	/**
 	 * Number of bytes which were fed into the encoder, without
@@ -72,10 +75,10 @@ struct HttpdOutput final : private ServerSocket {
 	mutable Mutex mutex;
 
 	/**
-	 * A #timer object to synchronize this output with the
+	 * A #Timer object to synchronize this output with the
 	 * wallclock.
 	 */
-	struct timer *timer;
+	Timer *timer;
 
 	/**
 	 * The header page, which is sent to every client on connect.
@@ -121,21 +124,20 @@ struct HttpdOutput final : private ServerSocket {
 	HttpdOutput(EventLoop &_loop);
 	~HttpdOutput();
 
-	bool Configure(const config_param *param, GError **error_r);
+	bool Configure(const config_param &param, Error &error);
 
-	bool Bind(GError **error_r);
+	bool Bind(Error &error);
 	void Unbind();
 
 	/**
 	 * Caller must lock the mutex.
 	 */
-	bool OpenEncoder(struct audio_format *audio_format,
-			 GError **error_r);
+	bool OpenEncoder(AudioFormat &audio_format, Error &error);
 
 	/**
 	 * Caller must lock the mutex.
 	 */
-	bool Open(struct audio_format *audio_format, GError **error_r);
+	bool Open(AudioFormat &audio_format, Error &error);
 
 	/**
 	 * Caller must lock the mutex.
@@ -192,9 +194,9 @@ struct HttpdOutput final : private ServerSocket {
 	 */
 	void BroadcastFromEncoder();
 
-	bool EncodeAndPlay(const void *chunk, size_t size, GError **error_r);
+	bool EncodeAndPlay(const void *chunk, size_t size, Error &error);
 
-	void SendTag(const struct tag *tag);
+	void SendTag(const Tag *tag);
 
 private:
 	virtual void OnAccept(int fd, const sockaddr &address,

@@ -18,11 +18,12 @@
  */
 
 #include "config.h"
-#include "PulseMixerPlugin.h"
-#include "mixer_api.h"
-#include "output/pulse_output_plugin.h"
-#include "conf.h"
+#include "PulseMixerPlugin.hxx"
+#include "MixerInternal.hxx"
+#include "output/PulseOutputPlugin.hxx"
 #include "GlobalEvents.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
 #include <glib.h>
 
@@ -39,27 +40,23 @@
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "pulse_mixer"
 
-struct pulse_mixer {
-	struct mixer base;
-
-	struct pulse_output *output;
+struct PulseMixer final : public Mixer {
+	PulseOutput *output;
 
 	bool online;
 	struct pa_cvolume volume;
 
+	PulseMixer(PulseOutput *_output)
+		:Mixer(pulse_mixer_plugin),
+		output(_output), online(false)
+	{
+	}
 };
 
-/**
- * The quark used for GError.domain.
- */
-static inline GQuark
-pulse_mixer_quark(void)
-{
-	return g_quark_from_static_string("pulse_mixer");
-}
+static constexpr Domain pulse_mixer_domain("pulse_mixer");
 
 static void
-pulse_mixer_offline(struct pulse_mixer *pm)
+pulse_mixer_offline(PulseMixer *pm)
 {
 	if (!pm->online)
 		return;
@@ -74,10 +71,10 @@ pulse_mixer_offline(struct pulse_mixer *pm)
  * value.
  */
 static void
-pulse_mixer_volume_cb(G_GNUC_UNUSED pa_context *context, const pa_sink_input_info *i,
+pulse_mixer_volume_cb(gcc_unused pa_context *context, const pa_sink_input_info *i,
 		      int eol, void *userdata)
 {
-	struct pulse_mixer *pm = (struct pulse_mixer *)userdata;
+	PulseMixer *pm = (PulseMixer *)userdata;
 
 	if (eol)
 		return;
@@ -94,7 +91,7 @@ pulse_mixer_volume_cb(G_GNUC_UNUSED pa_context *context, const pa_sink_input_inf
 }
 
 static void
-pulse_mixer_update(struct pulse_mixer *pm,
+pulse_mixer_update(PulseMixer *pm,
 		   struct pa_context *context, struct pa_stream *stream)
 {
 	pa_operation *o;
@@ -117,7 +114,7 @@ pulse_mixer_update(struct pulse_mixer *pm,
 }
 
 void
-pulse_mixer_on_connect(G_GNUC_UNUSED struct pulse_mixer *pm,
+pulse_mixer_on_connect(gcc_unused PulseMixer *pm,
 		       struct pa_context *context)
 {
 	pa_operation *o;
@@ -137,57 +134,51 @@ pulse_mixer_on_connect(G_GNUC_UNUSED struct pulse_mixer *pm,
 }
 
 void
-pulse_mixer_on_disconnect(struct pulse_mixer *pm)
+pulse_mixer_on_disconnect(PulseMixer *pm)
 {
 	pulse_mixer_offline(pm);
 }
 
 void
-pulse_mixer_on_change(struct pulse_mixer *pm,
+pulse_mixer_on_change(PulseMixer *pm,
 		      struct pa_context *context, struct pa_stream *stream)
 {
 	pulse_mixer_update(pm, context, stream);
 }
 
-static struct mixer *
-pulse_mixer_init(void *ao, G_GNUC_UNUSED const struct config_param *param,
-		 GError **error_r)
+static Mixer *
+pulse_mixer_init(void *ao, gcc_unused const config_param &param,
+		 Error &error)
 {
-	struct pulse_output *po = (struct pulse_output *)ao;
+	PulseOutput *po = (PulseOutput *)ao;
 
 	if (ao == NULL) {
-		g_set_error(error_r, pulse_mixer_quark(), 0,
-			    "The pulse mixer cannot work without the audio output");
+		error.Set(pulse_mixer_domain,
+			  "The pulse mixer cannot work without the audio output");
 		return nullptr;
 	}
 
-	struct pulse_mixer *pm = g_new(struct pulse_mixer,1);
-	mixer_init(&pm->base, &pulse_mixer_plugin);
-
-	pm->online = false;
-	pm->output = po;
+	PulseMixer *pm = new PulseMixer(po);
 
 	pulse_output_set_mixer(po, pm);
 
-	return &pm->base;
+	return pm;
 }
 
 static void
-pulse_mixer_finish(struct mixer *data)
+pulse_mixer_finish(Mixer *data)
 {
-	struct pulse_mixer *pm = (struct pulse_mixer *) data;
+	PulseMixer *pm = (PulseMixer *) data;
 
 	pulse_output_clear_mixer(pm->output, pm);
 
-	/* free resources */
-
-	g_free(pm);
+	delete pm;
 }
 
 static int
-pulse_mixer_get_volume(struct mixer *mixer, G_GNUC_UNUSED GError **error_r)
+pulse_mixer_get_volume(Mixer *mixer, gcc_unused Error &error)
 {
-	struct pulse_mixer *pm = (struct pulse_mixer *) mixer;
+	PulseMixer *pm = (PulseMixer *) mixer;
 	int ret;
 
 	pulse_output_lock(pm->output);
@@ -202,9 +193,9 @@ pulse_mixer_get_volume(struct mixer *mixer, G_GNUC_UNUSED GError **error_r)
 }
 
 static bool
-pulse_mixer_set_volume(struct mixer *mixer, unsigned volume, GError **error_r)
+pulse_mixer_set_volume(Mixer *mixer, unsigned volume, Error &error)
 {
-	struct pulse_mixer *pm = (struct pulse_mixer *) mixer;
+	PulseMixer *pm = (PulseMixer *) mixer;
 	struct pa_cvolume cvolume;
 	bool success;
 
@@ -212,13 +203,13 @@ pulse_mixer_set_volume(struct mixer *mixer, unsigned volume, GError **error_r)
 
 	if (!pm->online) {
 		pulse_output_unlock(pm->output);
-		g_set_error(error_r, pulse_mixer_quark(), 0, "disconnected");
+		error.Set(pulse_mixer_domain, "disconnected");
 		return false;
 	}
 
 	pa_cvolume_set(&cvolume, pm->volume.channels,
 		       (pa_volume_t)volume * PA_VOLUME_NORM / 100 + 0.5);
-	success = pulse_output_set_volume(pm->output, &cvolume, error_r);
+	success = pulse_output_set_volume(pm->output, &cvolume, error);
 	if (success)
 		pm->volume = cvolume;
 

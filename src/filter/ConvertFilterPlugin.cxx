@@ -22,10 +22,9 @@
 #include "FilterPlugin.hxx"
 #include "FilterInternal.hxx"
 #include "FilterRegistry.hxx"
-#include "conf.h"
-#include "PcmConvert.hxx"
+#include "pcm/PcmConvert.hxx"
 #include "util/Manual.hxx"
-#include "audio_format.h"
+#include "AudioFormat.hxx"
 #include "poison.h"
 
 #include <assert.h>
@@ -36,48 +35,49 @@ class ConvertFilter final : public Filter {
 	 * The input audio format; PCM data is passed to the filter()
 	 * method in this format.
 	 */
-	audio_format in_audio_format;
+	AudioFormat in_audio_format;
 
 	/**
 	 * The output audio format; the consumer of this plugin
 	 * expects PCM data in this format.  This defaults to
 	 * #in_audio_format, and can be set with convert_filter_set().
 	 */
-	audio_format out_audio_format;
+	AudioFormat out_audio_format;
 
 	Manual<PcmConvert> state;
 
 public:
-	void Set(const audio_format &_out_audio_format) {
-		assert(audio_format_valid(&in_audio_format));
-		assert(audio_format_valid(&out_audio_format));
-		assert(audio_format_valid(&_out_audio_format));
+	void Set(const AudioFormat &_out_audio_format) {
+		assert(in_audio_format.IsValid());
+		assert(out_audio_format.IsValid());
+		assert(_out_audio_format.IsValid());
 
 		out_audio_format = _out_audio_format;
 	}
 
-	virtual const audio_format *Open(audio_format &af, GError **error_r);
-	virtual void Close();
+	virtual AudioFormat Open(AudioFormat &af, Error &error) override;
+	virtual void Close() override;
 	virtual const void *FilterPCM(const void *src, size_t src_size,
-				      size_t *dest_size_r, GError **error_r);
+				      size_t *dest_size_r,
+				      Error &error) override;
 };
 
 static Filter *
-convert_filter_init(gcc_unused const struct config_param *param,
-		    gcc_unused GError **error_r)
+convert_filter_init(gcc_unused const config_param &param,
+		    gcc_unused Error &error)
 {
 	return new ConvertFilter();
 }
 
-const struct audio_format *
-ConvertFilter::Open(audio_format &audio_format, gcc_unused GError **error_r)
+AudioFormat
+ConvertFilter::Open(AudioFormat &audio_format, gcc_unused Error &error)
 {
-	assert(audio_format_valid(&audio_format));
+	assert(audio_format.IsValid());
 
 	in_audio_format = out_audio_format = audio_format;
 	state.Construct();
 
-	return &in_audio_format;
+	return in_audio_format;
 }
 
 void
@@ -91,18 +91,18 @@ ConvertFilter::Close()
 
 const void *
 ConvertFilter::FilterPCM(const void *src, size_t src_size,
-			 size_t *dest_size_r, GError **error_r)
+			 size_t *dest_size_r, Error &error)
 {
-	if (audio_format_equals(&in_audio_format, &out_audio_format)) {
+	if (in_audio_format == out_audio_format) {
 		/* optimized special case: no-op */
 		*dest_size_r = src_size;
 		return src;
 	}
 
-	return state->Convert(&in_audio_format,
+	return state->Convert(in_audio_format,
 			      src, src_size,
-			      &out_audio_format, dest_size_r,
-			      error_r);
+			      out_audio_format, dest_size_r,
+			      error);
 }
 
 const struct filter_plugin convert_filter_plugin = {
@@ -111,7 +111,7 @@ const struct filter_plugin convert_filter_plugin = {
 };
 
 void
-convert_filter_set(Filter *_filter, const audio_format &out_audio_format)
+convert_filter_set(Filter *_filter, const AudioFormat out_audio_format)
 {
 	ConvertFilter *filter = (ConvertFilter *)_filter;
 

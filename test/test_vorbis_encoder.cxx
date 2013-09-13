@@ -18,14 +18,13 @@
  */
 
 #include "config.h"
-#include "encoder_list.h"
-#include "encoder_plugin.h"
-#include "audio_format.h"
-#include "conf.h"
+#include "EncoderList.hxx"
+#include "EncoderPlugin.hxx"
+#include "AudioFormat.hxx"
+#include "ConfigData.hxx"
 #include "stdbin.h"
-#include "tag.h"
-
-#include <glib.h>
+#include "tag/Tag.hxx"
+#include "util/Error.hxx"
 
 #include <stddef.h>
 #include <unistd.h>
@@ -33,78 +32,74 @@
 static uint8_t zero[256];
 
 static void
-encoder_to_stdout(struct encoder *encoder)
+encoder_to_stdout(Encoder &encoder)
 {
 	size_t length;
 	static char buffer[32768];
 
-	while ((length = encoder_read(encoder, buffer, sizeof(buffer))) > 0) {
-		G_GNUC_UNUSED ssize_t ignored = write(1, buffer, length);
+	while ((length = encoder_read(&encoder, buffer, sizeof(buffer))) > 0) {
+		gcc_unused ssize_t ignored = write(1, buffer, length);
 	}
 }
 
 int
-main(G_GNUC_UNUSED int argc, G_GNUC_UNUSED char **argv)
+main(gcc_unused int argc, gcc_unused char **argv)
 {
-	G_GNUC_UNUSED bool success;
+	gcc_unused bool success;
 
 	/* create the encoder */
 
-	const struct encoder_plugin *plugin = encoder_plugin_get("vorbis");
+	const auto plugin = encoder_plugin_get("vorbis");
 	assert(plugin != NULL);
 
 	config_param param;
 	param.AddBlockParam("quality", "5.0", -1);
 
-	struct encoder *encoder = encoder_init(plugin, &param, NULL);
+	const auto encoder = encoder_init(*plugin, param, IgnoreError());
 	assert(encoder != NULL);
 
 	/* open the encoder */
 
-	struct audio_format audio_format;
-
-	audio_format_init(&audio_format, 44100, SAMPLE_FORMAT_S16, 2);
-	success = encoder_open(encoder, &audio_format, NULL);
+	AudioFormat audio_format(44100, SampleFormat::S16, 2);
+	success = encoder_open(encoder, audio_format, IgnoreError());
 	assert(success);
 
-	encoder_to_stdout(encoder);
+	encoder_to_stdout(*encoder);
 
 	/* write a block of data */
 
-	success = encoder_write(encoder, zero, sizeof(zero), NULL);
+	success = encoder_write(encoder, zero, sizeof(zero), IgnoreError());
 	assert(success);
 
-	encoder_to_stdout(encoder);
+	encoder_to_stdout(*encoder);
 
 	/* write a tag */
 
-	success = encoder_pre_tag(encoder, NULL);
+	success = encoder_pre_tag(encoder, IgnoreError());
 	assert(success);
 
-	encoder_to_stdout(encoder);
+	encoder_to_stdout(*encoder);
 
-	struct tag *tag = tag_new();
-	tag_add_item(tag, TAG_ARTIST, "Foo");
-	tag_add_item(tag, TAG_TITLE, "Bar");
+	Tag tag;
+	tag.AddItem(TAG_ARTIST, "Foo");
+	tag.AddItem(TAG_TITLE, "Bar");
 
-	success = encoder_tag(encoder, tag, NULL);
+	success = encoder_tag(encoder, &tag, IgnoreError());
 	assert(success);
 
-	tag_free(tag);
-
-	encoder_to_stdout(encoder);
+	encoder_to_stdout(*encoder);
 
 	/* write another block of data */
 
-	success = encoder_write(encoder, zero, sizeof(zero), NULL);
+	success = encoder_write(encoder, zero, sizeof(zero), IgnoreError());
 	assert(success);
 
 	/* finish */
 
-	success = encoder_end(encoder, NULL);
+	success = encoder_end(encoder, IgnoreError());
 	assert(success);
 
-	encoder_to_stdout(encoder);
+	encoder_to_stdout(*encoder);
 
 	encoder_close(encoder);
 	encoder_finish(encoder);

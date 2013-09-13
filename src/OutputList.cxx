@@ -19,26 +19,26 @@
 
 #include "config.h"
 #include "OutputList.hxx"
-#include "output_api.h"
+#include "OutputAPI.hxx"
 #include "output/AlsaOutputPlugin.hxx"
-#include "output/ao_output_plugin.h"
-#include "output/ffado_output_plugin.h"
-#include "output/fifo_output_plugin.h"
+#include "output/AoOutputPlugin.hxx"
+#include "output/FifoOutputPlugin.hxx"
 #include "output/HttpdOutputPlugin.hxx"
-#include "output/jack_output_plugin.h"
-#include "output/mvp_output_plugin.h"
+#include "output/JackOutputPlugin.hxx"
 #include "output/NullOutputPlugin.hxx"
-#include "output/openal_output_plugin.h"
+#include "output/OpenALOutputPlugin.hxx"
 #include "output/rpi_output_plugin.h"
 #include "output/OssOutputPlugin.hxx"
 #include "output/OSXOutputPlugin.hxx"
-#include "output/pipe_output_plugin.h"
-#include "output/pulse_output_plugin.h"
-#include "output/recorder_output_plugin.h"
+#include "output/PipeOutputPlugin.hxx"
+#include "output/PulseOutputPlugin.hxx"
+#include "output/RecorderOutputPlugin.hxx"
 #include "output/RoarOutputPlugin.hxx"
-#include "output/shout_output_plugin.h"
-#include "output/solaris_output_plugin.h"
-#include "output/winmm_output_plugin.h"
+#include "output/ShoutOutputPlugin.hxx"
+#include "output/SolarisOutputPlugin.hxx"
+#include "output/WinmmOutputPlugin.hxx"
+
+#include <string.h>
 
 const struct audio_output_plugin *const audio_output_plugins[] = {
 #ifdef HAVE_SHOUT
@@ -78,9 +78,6 @@ const struct audio_output_plugin *const audio_output_plugins[] = {
 #ifdef HAVE_PULSE
 	&pulse_output_plugin,
 #endif
-#ifdef HAVE_MVP
-	&mvp_output_plugin,
-#endif
 #ifdef HAVE_JACK
 	&jack_output_plugin,
 #endif
@@ -92,9 +89,6 @@ const struct audio_output_plugin *const audio_output_plugins[] = {
 #endif
 #ifdef ENABLE_WINMM_OUTPUT
 	&winmm_output_plugin,
-#endif
-#ifdef ENABLE_FFADO_OUTPUT
-	&ffado_output_plugin,
 #endif
 	NULL
 };

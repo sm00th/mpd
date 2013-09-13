@@ -20,6 +20,8 @@
 #include "config.h"
 #include "ClientInternal.hxx"
 
+#include <glib.h>
+
 void
 Client::SetExpired()
 {
@@ -30,7 +32,7 @@ Client::SetExpired()
 	TimeoutMonitor::Schedule(0);
 }
 
-bool
+void
 Client::OnTimeout()
 {
 	if (!IsExpired()) {
@@ -39,5 +41,4 @@ Client::OnTimeout()
 	}
 
 	Close();
-	return false;
 }

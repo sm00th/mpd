@@ -22,24 +22,49 @@
 
 #include "check.h"
 
+#ifndef USE_EPOLL
 #include <glib.h>
+#endif
 
 class EventLoop;
 
 class TimeoutMonitor {
+#ifdef USE_EPOLL
+	friend class EventLoop;
+#endif
+
 	EventLoop &loop;
+
+#ifdef USE_EPOLL
+	bool active;
+#else
 	GSource *source;
+#endif
 
 public:
+#ifdef USE_EPOLL
+	TimeoutMonitor(EventLoop &_loop)
+		:loop(_loop), active(false) {
+	}
+#else
 	TimeoutMonitor(EventLoop &_loop)
 		:loop(_loop), source(nullptr) {}
+#endif
 
 	~TimeoutMonitor() {
 		Cancel();
 	}
 
+	EventLoop &GetEventLoop() {
+		return loop;
+	}
+
 	bool IsActive() const {
+#ifdef USE_EPOLL
+		return active;
+#else
 		return source != nullptr;
+#endif
 	}
 
 	void Schedule(unsigned ms);
@@ -47,14 +72,14 @@ public:
 	void Cancel();
 
 protected:
-	/**
-	 * @return true reschedules the timeout again
-	 */
-	virtual bool OnTimeout() = 0;
+	virtual void OnTimeout() = 0;
 
 private:
-	bool Run();
+	void Run();
+
+#ifndef USE_EPOLL
 	static gboolean Callback(gpointer data);
+#endif
 };
 
 #endif /* MAIN_NOTIFY_H */

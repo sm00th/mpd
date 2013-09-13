@@ -24,11 +24,12 @@
 #include "OggUtil.hxx"
 #include "OggFind.hxx"
 #include "OggSyncState.hxx"
-#include "decoder_api.h"
+#include "DecoderAPI.hxx"
 #include "OggCodec.hxx"
-#include "audio_check.h"
-#include "tag_handler.h"
+#include "CheckAudioFormat.hxx"
+#include "tag/TagHandler.hxx"
 #include "InputStream.hxx"
+#include "util/Error.hxx"
 
 #include <opus.h>
 #include <ogg/ogg.h>
@@ -36,6 +37,7 @@
 #include <glib.h>
 
 #include <stdio.h>
+#include <string.h>
 
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "opus"
@@ -57,7 +59,7 @@ IsOpusTags(const ogg_packet &packet)
 }
 
 static bool
-mpd_opus_init(G_GNUC_UNUSED const struct config_param *param)
+mpd_opus_init(gcc_unused const config_param &param)
 {
 	g_debug("%s", opus_get_version_string());
 
@@ -201,11 +203,10 @@ MPDOpusDecoder::HandleBOS(const ogg_packet &packet)
 		return DECODE_COMMAND_STOP;
 	}
 
-	struct audio_format audio_format;
-	audio_format_init(&audio_format, opus_sample_rate,
-			  SAMPLE_FORMAT_S16, channels);
-	decoder_initialized(decoder, &audio_format, false, -1);
-	frame_size = audio_format_frame_size(&audio_format);
+	const AudioFormat audio_format(opus_sample_rate,
+				       SampleFormat::S16, channels);
+	decoder_initialized(decoder, audio_format, false, -1);
+	frame_size = audio_format.GetFrameSize();
 
 	/* allocate an output buffer for 16 bit PCM samples big enough
 	   to hold a quarter second, larger than 120ms required by
@@ -221,16 +222,16 @@ MPDOpusDecoder::HandleBOS(const ogg_packet &packet)
 inline enum decoder_command
 MPDOpusDecoder::HandleTags(const ogg_packet &packet)
 {
-	struct tag *tag = tag_new();
+	Tag tag;
 
 	enum decoder_command cmd;
-	if (ScanOpusTags(packet.packet, packet.bytes, &add_tag_handler, tag) &&
-	    !tag_is_empty(tag))
-		cmd = decoder_tag(decoder, input_stream, tag);
+	if (ScanOpusTags(packet.packet, packet.bytes,
+			 &add_tag_handler, &tag) &&
+	    !tag.IsEmpty())
+		cmd = decoder_tag(decoder, input_stream, std::move(tag));
 	else
 		cmd = decoder_get_command(decoder);
 
-	tag_free(tag);
 	return cmd;
 }
 
@@ -271,7 +272,7 @@ mpd_opus_stream_decode(struct decoder *decoder,
 
 	/* rewind the stream, because ogg_codec_detect() has
 	   moved it */
-	input_stream_lock_seek(input_stream, 0, SEEK_SET, nullptr);
+	input_stream->LockSeek(0, SEEK_SET, IgnoreError());
 
 	MPDOpusDecoder d(decoder, input_stream);
 	OggSyncState oy(*input_stream, decoder);
@@ -297,12 +298,13 @@ SeekFindEOS(OggSyncState &oy, ogg_stream_state &os, ogg_packet &packet,
 	if (is->size > 0 && is->size - is->offset < 65536)
 		return OggFindEOS(oy, os, packet);
 
-	if (!input_stream_cheap_seeking(is))
+	if (!is->CheapSeeking())
 		return false;
 
 	oy.Reset();
 
-	return input_stream_lock_seek(is, -65536, SEEK_END, nullptr) &&
+	Error error;
+	return is->LockSeek(-65536, SEEK_END, error) &&
 		oy.ExpectPageSeekIn(os) &&
 		OggFindEOS(oy, os, packet);
 }

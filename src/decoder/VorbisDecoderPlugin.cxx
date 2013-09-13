@@ -20,16 +20,13 @@
 #include "config.h"
 #include "VorbisDecoderPlugin.h"
 #include "VorbisComments.hxx"
-#include "decoder_api.h"
+#include "DecoderAPI.hxx"
 #include "InputStream.hxx"
 #include "OggCodec.hxx"
-
-extern "C" {
-#include "audio_check.h"
-#include "uri.h"
-}
-
-#include "tag_handler.h"
+#include "util/Error.hxx"
+#include "util/UriUtil.hxx"
+#include "CheckAudioFormat.hxx"
+#include "tag/TagHandler.hxx"
 
 #ifndef HAVE_TREMOR
 #define OV_EXCLUDE_STATIC_CALLBACKS
@@ -84,14 +81,15 @@ static int ogg_seek_cb(void *data, ogg_int64_t offset, int whence)
 {
 	struct vorbis_input_stream *vis = (struct vorbis_input_stream *)data;
 
+	Error error;
 	return vis->seekable &&
 		(!vis->decoder || decoder_get_command(vis->decoder) != DECODE_COMMAND_STOP) &&
-		input_stream_lock_seek(vis->input_stream, offset, whence, NULL)
+		vis->input_stream->LockSeek(offset, whence, error)
 		? 0 : -1;
 }
 
 /* TODO: check Ogg libraries API and see if we can just not have this func */
-static int ogg_close_cb(G_GNUC_UNUSED void *data)
+static int ogg_close_cb(gcc_unused void *data)
 {
 	return 0;
 }
@@ -140,7 +138,7 @@ vorbis_is_open(struct vorbis_input_stream *vis, OggVorbis_File *vf,
 {
 	vis->decoder = decoder;
 	vis->input_stream = input_stream;
-	vis->seekable = input_stream_cheap_seeking(input_stream);
+	vis->seekable = input_stream->CheapSeeking();
 
 	int ret = ov_open_callbacks(vis, vf, NULL, 0, vorbis_is_callbacks);
 	if (ret < 0) {
@@ -158,12 +156,12 @@ static void
 vorbis_send_comments(struct decoder *decoder, struct input_stream *is,
 		     char **comments)
 {
-	struct tag *tag = vorbis_comments_to_tag(comments);
+	Tag *tag = vorbis_comments_to_tag(comments);
 	if (!tag)
 		return;
 
-	decoder_tag(decoder, is, tag);
-	tag_free(tag);
+	decoder_tag(decoder, is, std::move(*tag));
+	delete tag;
 }
 
 #ifndef HAVE_TREMOR
@@ -186,14 +184,12 @@ static void
 vorbis_stream_decode(struct decoder *decoder,
 		     struct input_stream *input_stream)
 {
-	GError *error = NULL;
-
 	if (ogg_codec_detect(decoder, input_stream) != OGG_CODEC_VORBIS)
 		return;
 
 	/* rewind the stream, because ogg_codec_detect() has
 	   moved it */
-	input_stream_lock_seek(input_stream, 0, SEEK_SET, NULL);
+	input_stream->LockSeek(0, SEEK_SET, IgnoreError());
 
 	struct vorbis_input_stream vis;
 	OggVorbis_File vf;
@@ -206,16 +202,16 @@ vorbis_stream_decode(struct decoder *decoder,
 		return;
 	}
 
-	struct audio_format audio_format;
-	if (!audio_format_init_checked(&audio_format, vi->rate,
+	Error error;
+	AudioFormat audio_format;
+	if (!audio_format_init_checked(audio_format, vi->rate,
 #ifdef HAVE_TREMOR
-				       SAMPLE_FORMAT_S16,
+				       SampleFormat::S16,
 #else
-				       SAMPLE_FORMAT_FLOAT,
+				       SampleFormat::FLOAT,
 #endif
-				       vi->channels, &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+				       vi->channels, error)) {
+		g_warning("%s", error.GetMessage());
 		return;
 	}
 
@@ -223,7 +219,7 @@ vorbis_stream_decode(struct decoder *decoder,
 	if (total_time < 0)
 		total_time = 0;
 
-	decoder_initialized(decoder, &audio_format, vis.seekable, total_time);
+	decoder_initialized(decoder, audio_format, vis.seekable, total_time);
 
 	enum decoder_command cmd = decoder_get_command(decoder);
 

@@ -31,7 +31,7 @@
 #include "protocol/ArgParser.hxx"
 
 extern "C" {
-#include "audio_format.h"
+#include "AudioFormat.hxx"
 }
 
 #include "replay_gain_config.h"
@@ -83,7 +83,7 @@ handle_playid(Client *client, int argc, char *argv[])
 
 enum command_return
 handle_stop(Client *client,
-	    G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+	    gcc_unused int argc, gcc_unused char *argv[])
 {
 	client->partition.Stop();
 	return COMMAND_RETURN_OK;
@@ -91,7 +91,7 @@ handle_stop(Client *client,
 
 enum command_return
 handle_currentsong(Client *client,
-		   G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		   gcc_unused int argc, gcc_unused char *argv[])
 {
 	playlist_print_current(client, &client->playlist);
 	return COMMAND_RETURN_OK;
@@ -115,7 +115,7 @@ handle_pause(Client *client,
 
 enum command_return
 handle_status(Client *client,
-	      G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+	      gcc_unused int argc, gcc_unused char *argv[])
 {
 	const char *state = NULL;
 	int updateJobId;
@@ -169,19 +169,23 @@ handle_status(Client *client,
 	}
 
 	if (player_status.state != PLAYER_STATE_STOP) {
-		struct audio_format_string af_string;
-
 		client_printf(client,
 			      COMMAND_STATUS_TIME ": %i:%i\n"
 			      "elapsed: %1.3f\n"
-			      COMMAND_STATUS_BITRATE ": %u\n"
-			      COMMAND_STATUS_AUDIO ": %s\n",
+			      COMMAND_STATUS_BITRATE ": %u\n",
 			      (int)(player_status.elapsed_time + 0.5),
 			      (int)(player_status.total_time + 0.5),
 			      player_status.elapsed_time,
-			      player_status.bit_rate,
-			      audio_format_to_string(&player_status.audio_format,
-						     &af_string));
+			      player_status.bit_rate);
+
+		if (player_status.audio_format.IsDefined()) {
+			struct audio_format_string af_string;
+
+			client_printf(client,
+				      COMMAND_STATUS_AUDIO ": %s\n",
+				      audio_format_to_string(player_status.audio_format,
+							     &af_string));
+		}
 	}
 
 	if ((updateJobId = isUpdatingDB())) {
@@ -211,7 +215,7 @@ handle_status(Client *client,
 
 enum command_return
 handle_next(Client *client,
-	    G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+	    gcc_unused int argc, gcc_unused char *argv[])
 {
 	playlist &playlist = client->playlist;
 
@@ -228,14 +232,14 @@ handle_next(Client *client,
 
 enum command_return
 handle_previous(Client *client,
-		G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		gcc_unused int argc, gcc_unused char *argv[])
 {
 	client->partition.PlayPrevious();
 	return COMMAND_RETURN_OK;
 }
 
 enum command_return
-handle_repeat(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_repeat(Client *client, gcc_unused int argc, char *argv[])
 {
 	bool status;
 	if (!check_bool(client, &status, argv[1]))
@@ -246,7 +250,7 @@ handle_repeat(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_single(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_single(Client *client, gcc_unused int argc, char *argv[])
 {
 	bool status;
 	if (!check_bool(client, &status, argv[1]))
@@ -257,7 +261,7 @@ handle_single(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_consume(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_consume(Client *client, gcc_unused int argc, char *argv[])
 {
 	bool status;
 	if (!check_bool(client, &status, argv[1]))
@@ -268,7 +272,7 @@ handle_consume(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_random(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_random(Client *client, gcc_unused int argc, char *argv[])
 {
 	bool status;
 	if (!check_bool(client, &status, argv[1]))
@@ -280,15 +284,15 @@ handle_random(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_clearerror(G_GNUC_UNUSED Client *client,
-		  G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+handle_clearerror(gcc_unused Client *client,
+		  gcc_unused int argc, gcc_unused char *argv[])
 {
 	client->player_control->ClearError();
 	return COMMAND_RETURN_OK;
 }
 
 enum command_return
-handle_seek(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_seek(Client *client, gcc_unused int argc, char *argv[])
 {
 	unsigned song, seek_time;
 
@@ -303,7 +307,7 @@ handle_seek(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_seekid(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_seekid(Client *client, gcc_unused int argc, char *argv[])
 {
 	unsigned id, seek_time;
 
@@ -318,7 +322,7 @@ handle_seekid(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_seekcur(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_seekcur(Client *client, gcc_unused int argc, char *argv[])
 {
 	const char *p = argv[1];
 	bool relative = *p == '+' || *p == '-';
@@ -332,7 +336,7 @@ handle_seekcur(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_crossfade(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_crossfade(Client *client, gcc_unused int argc, char *argv[])
 {
 	unsigned xfade_time;
 
@@ -344,7 +348,7 @@ handle_crossfade(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_mixrampdb(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_mixrampdb(Client *client, gcc_unused int argc, char *argv[])
 {
 	float db;
 
@@ -356,7 +360,7 @@ handle_mixrampdb(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_mixrampdelay(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_mixrampdelay(Client *client, gcc_unused int argc, char *argv[])
 {
 	float delay_secs;
 
@@ -369,7 +373,7 @@ handle_mixrampdelay(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 
 enum command_return
 handle_replay_gain_mode(Client *client,
-			G_GNUC_UNUSED int argc, char *argv[])
+			gcc_unused int argc, char *argv[])
 {
 	if (!replay_gain_set_mode_string(argv[1])) {
 		command_error(client, ACK_ERROR_ARG,
@@ -384,7 +388,7 @@ handle_replay_gain_mode(Client *client,
 
 enum command_return
 handle_replay_gain_status(Client *client,
-			  G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+			  gcc_unused int argc, gcc_unused char *argv[])
 {
 	client_printf(client, "replay_gain_mode: %s\n",
 		      replay_gain_get_mode_string());

@@ -23,7 +23,7 @@
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 
-struct playlist_provider;
+class SongEnumerator;
 struct input_stream;
 
 /**
@@ -35,7 +35,7 @@ struct input_stream;
  * here, which must be closed after the playlist_provider object is
  * freed
  */
-struct playlist_provider *
+SongEnumerator *
 playlist_open_any(const char *uri, Mutex &mutex, Cond &cond,
 		  struct input_stream **is_r);
 

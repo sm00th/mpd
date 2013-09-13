@@ -20,9 +20,10 @@
 #include "config.h"
 #include "replay_gain_config.h"
 #include "Idle.hxx"
-#include "conf.h"
+#include "ConfigData.hxx"
+#include "ConfigGlobal.hxx"
 #include "Playlist.hxx"
-#include "mpd_error.h"
+#include "system/FatalError.hxx"
 
 #include <glib.h>
 
@@ -55,9 +56,8 @@ replay_gain_get_mode_string(void)
 		return "album";
 	}
 
-	/* unreachable */
 	assert(false);
-	return "off";
+	gcc_unreachable();
 }
 
 bool
@@ -86,8 +86,8 @@ void replay_gain_global_init(void)
 	const struct config_param *param = config_get_param(CONF_REPLAYGAIN);
 
 	if (param != NULL && !replay_gain_set_mode_string(param->value)) {
-		MPD_ERROR("replaygain value \"%s\" at line %i is invalid\n",
-			  param->value, param->line);
+		FormatFatalError("replaygain value \"%s\" at line %i is invalid\n",
+				 param->value, param->line);
 	}
 
 	param = config_get_param(CONF_REPLAYGAIN_PREAMP);
@@ -97,13 +97,13 @@ void replay_gain_global_init(void)
 		float f = strtod(param->value, &test);
 
 		if (*test != '\0') {
-			MPD_ERROR("Replaygain preamp \"%s\" is not a number at "
-				  "line %i\n", param->value, param->line);
+			FormatFatalError("Replaygain preamp \"%s\" is not a number at "
+					 "line %i\n", param->value, param->line);
 		}
 
 		if (f < -15 || f > 15) {
-			MPD_ERROR("Replaygain preamp \"%s\" is not between -15 and"
-				  "15 at line %i\n", param->value, param->line);
+			FormatFatalError("Replaygain preamp \"%s\" is not between -15 and"
+					 "15 at line %i\n", param->value, param->line);
 		}
 
 		replay_gain_preamp = pow(10, f / 20.0);
@@ -116,13 +116,13 @@ void replay_gain_global_init(void)
 		float f = strtod(param->value, &test);
 
 		if (*test != '\0') {
-			MPD_ERROR("Replaygain missing preamp \"%s\" is not a number at "
-				  "line %i\n", param->value, param->line);
+			FormatFatalError("Replaygain missing preamp \"%s\" is not a number at "
+					 "line %i\n", param->value, param->line);
 		}
 
 		if (f < -15 || f > 15) {
-			MPD_ERROR("Replaygain missing preamp \"%s\" is not between -15 and"
-				  "15 at line %i\n", param->value, param->line);
+			FormatFatalError("Replaygain missing preamp \"%s\" is not between -15 and"
+					 "15 at line %i\n", param->value, param->line);
 		}
 
 		replay_gain_missing_preamp = pow(10, f / 20.0);

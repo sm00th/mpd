@@ -21,19 +21,22 @@
 #include "HttpdOutputPlugin.hxx"
 #include "HttpdInternal.hxx"
 #include "HttpdClient.hxx"
-#include "output_api.h"
-#include "encoder_plugin.h"
-#include "encoder_list.h"
-#include "resolver.h"
+#include "OutputAPI.hxx"
+#include "EncoderPlugin.hxx"
+#include "EncoderList.hxx"
+#include "system/Resolver.hxx"
 #include "Page.hxx"
 #include "IcyMetaDataServer.hxx"
-#include "fd_util.h"
+#include "system/fd_util.h"
 #include "Main.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
 #include <assert.h>
 
 #include <sys/types.h>
 #include <unistd.h>
+#include <string.h>
 #include <errno.h>
 
 #ifdef HAVE_LIBWRAP
@@ -44,14 +47,7 @@
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "httpd_output"
 
-/**
- * The quark used for GError.domain.
- */
-static inline GQuark
-httpd_output_quark(void)
-{
-	return g_quark_from_static_string("httpd_output");
-}
+static constexpr Domain httpd_output_domain("httpd_output");
 
 inline
 HttpdOutput::HttpdOutput(EventLoop &_loop)
@@ -72,12 +68,12 @@ HttpdOutput::~HttpdOutput()
 }
 
 inline bool
-HttpdOutput::Bind(GError **error_r)
+HttpdOutput::Bind(Error &error)
 {
 	open = false;
 
 	const ScopeLock protect(mutex);
-	return ServerSocket::Open(error_r);
+	return ServerSocket::Open(error);
 }
 
 inline void
@@ -90,42 +86,39 @@ HttpdOutput::Unbind()
 }
 
 inline bool
-HttpdOutput::Configure(const config_param *param, GError **error_r)
+HttpdOutput::Configure(const config_param &param, Error &error)
 {
 	/* read configuration */
-	name = config_get_block_string(param, "name", "Set name in config");
-	genre = config_get_block_string(param, "genre", "Set genre in config");
-	website = config_get_block_string(param, "website",
-					  "Set website in config");
+	name = param.GetBlockValue("name", "Set name in config");
+	genre = param.GetBlockValue("genre", "Set genre in config");
+	website = param.GetBlockValue("website", "Set website in config");
 
-	guint port = config_get_block_unsigned(param, "port", 8000);
+	guint port = param.GetBlockValue("port", 8000u);
 
 	const char *encoder_name =
-		config_get_block_string(param, "encoder", "vorbis");
-	const struct encoder_plugin *encoder_plugin =
-		encoder_plugin_get(encoder_name);
+		param.GetBlockValue("encoder", "vorbis");
+	const auto encoder_plugin = encoder_plugin_get(encoder_name);
 	if (encoder_plugin == NULL) {
-		g_set_error(error_r, httpd_output_quark(), 0,
-			    "No such encoder: %s", encoder_name);
+		error.Format(httpd_output_domain,
+			     "No such encoder: %s", encoder_name);
 		return false;
 	}
 
-	clients_max = config_get_block_unsigned(param,"max_clients", 0);
+	clients_max = param.GetBlockValue("max_clients", 0u);
 
 	/* set up bind_to_address */
 
-	const char *bind_to_address =
-		config_get_block_string(param, "bind_to_address", NULL);
+	const char *bind_to_address = param.GetBlockValue("bind_to_address");
 	bool success = bind_to_address != NULL &&
 		strcmp(bind_to_address, "any") != 0
-		? AddHost(bind_to_address, port, error_r)
-		: AddPort(port, error_r);
+		? AddHost(bind_to_address, port, error)
+		: AddPort(port, error);
 	if (!success)
 		return false;
 
 	/* initialize encoder */
 
-	encoder = encoder_init(encoder_plugin, param, error_r);
+	encoder = encoder_init(*encoder_plugin, param, error);
 	if (encoder == nullptr)
 		return false;
 
@@ -138,18 +131,17 @@ HttpdOutput::Configure(const config_param *param, GError **error_r)
 }
 
 static struct audio_output *
-httpd_output_init(const struct config_param *param,
-		  GError **error_r)
+httpd_output_init(const config_param &param, Error &error)
 {
 	HttpdOutput *httpd = new HttpdOutput(*main_loop);
 
 	if (!ao_base_init(&httpd->base, &httpd_output_plugin, param,
-			  error_r)) {
+			  error)) {
 		delete httpd;
 		return nullptr;
 	}
 
-	if (!httpd->Configure(param, error_r)) {
+	if (!httpd->Configure(param, error)) {
 		ao_base_finish(&httpd->base);
 		delete httpd;
 		return nullptr;
@@ -190,7 +182,7 @@ inline void
 HttpdOutput::AddClient(int fd)
 {
 	clients.emplace_front(this, fd, GetEventLoop(),
-			      encoder->plugin->tag == NULL);
+			      encoder->plugin.tag == nullptr);
 	++clients_cnt;
 
 	/* pass metadata to client */
@@ -207,7 +199,8 @@ HttpdOutput::OnAccept(int fd, const sockaddr &address,
 
 #ifdef HAVE_LIBWRAP
 	if (address.sa_family != AF_UNIX) {
-		char *hostaddr = sockaddr_to_string(&address, address_length, NULL);
+		char *hostaddr = sockaddr_to_string(&address, address_length,
+						    IgnoreError());
 		const char *progname = g_get_prgname();
 
 		struct request_info req;
@@ -251,7 +244,7 @@ HttpdOutput::ReadPage()
 		/* we have fed a lot of input into the encoder, but it
 		   didn't give anything back yet - flush now to avoid
 		   buffer underruns */
-		encoder_flush(encoder, NULL);
+		encoder_flush(encoder, IgnoreError());
 		unflushed_input = 0;
 	}
 
@@ -275,11 +268,11 @@ HttpdOutput::ReadPage()
 }
 
 static bool
-httpd_output_enable(struct audio_output *ao, GError **error_r)
+httpd_output_enable(struct audio_output *ao, Error &error)
 {
 	HttpdOutput *httpd = Cast(ao);
 
-	return httpd->Bind(error_r);
+	return httpd->Bind(error);
 }
 
 static void
@@ -291,7 +284,7 @@ httpd_output_disable(struct audio_output *ao)
 }
 
 inline bool
-HttpdOutput::OpenEncoder(struct audio_format *audio_format, GError **error)
+HttpdOutput::OpenEncoder(AudioFormat &audio_format, Error &error)
 {
 	if (!encoder_open(encoder, audio_format, error))
 		return false;
@@ -307,20 +300,20 @@ HttpdOutput::OpenEncoder(struct audio_format *audio_format, GError **error)
 }
 
 inline bool
-HttpdOutput::Open(struct audio_format *audio_format, GError **error_r)
+HttpdOutput::Open(AudioFormat &audio_format, Error &error)
 {
 	assert(!open);
 	assert(clients.empty());
 
 	/* open the encoder */
 
-	if (!OpenEncoder(audio_format, error_r))
+	if (!OpenEncoder(audio_format, error))
 		return false;
 
 	/* initialize other attributes */
 
 	clients_cnt = 0;
-	timer = timer_new(audio_format);
+	timer = new Timer(audio_format);
 
 	open = true;
 
@@ -328,8 +321,8 @@ HttpdOutput::Open(struct audio_format *audio_format, GError **error_r)
 }
 
 static bool
-httpd_output_open(struct audio_output *ao, struct audio_format *audio_format,
-		  GError **error)
+httpd_output_open(struct audio_output *ao, AudioFormat &audio_format,
+		  Error &error)
 {
 	HttpdOutput *httpd = Cast(ao);
 
@@ -346,7 +339,7 @@ HttpdOutput::Close()
 
 	open = false;
 
-	timer_free(timer);
+	delete timer;
 
 	clients.clear();
 
@@ -398,7 +391,7 @@ httpd_output_delay(struct audio_output *ao)
 		   then httpd_output_pause() will not do anything, it
 		   will not fill the buffer and it will not update the
 		   timer; therefore, we reset the timer here */
-		timer_reset(httpd->timer);
+		httpd->timer->Reset();
 
 		/* some arbitrary delay that is long enough to avoid
 		   consuming too much CPU, and short enough to notice
@@ -406,8 +399,8 @@ httpd_output_delay(struct audio_output *ao)
 		return 1000;
 	}
 
-	return httpd->timer->started
-		? timer_delay(httpd->timer)
+	return httpd->timer->IsStarted()
+		? httpd->timer->GetDelay()
 		: 0;
 }
 
@@ -441,9 +434,9 @@ HttpdOutput::BroadcastFromEncoder()
 }
 
 inline bool
-HttpdOutput::EncodeAndPlay(const void *chunk, size_t size, GError **error_r)
+HttpdOutput::EncodeAndPlay(const void *chunk, size_t size, Error &error)
 {
-	if (!encoder_write(encoder, chunk, size, error_r))
+	if (!encoder_write(encoder, chunk, size, error))
 		return false;
 
 	unflushed_input += size;
@@ -454,18 +447,18 @@ HttpdOutput::EncodeAndPlay(const void *chunk, size_t size, GError **error_r)
 
 static size_t
 httpd_output_play(struct audio_output *ao, const void *chunk, size_t size,
-		  GError **error_r)
+		  Error &error)
 {
 	HttpdOutput *httpd = Cast(ao);
 
 	if (httpd->LockHasClients()) {
-		if (!httpd->EncodeAndPlay(chunk, size, error_r))
+		if (!httpd->EncodeAndPlay(chunk, size, error))
 			return 0;
 	}
 
-	if (!httpd->timer->started)
-		timer_start(httpd->timer);
-	timer_add(httpd->timer, size);
+	if (!httpd->timer->IsStarted())
+		httpd->timer->Start();
+	httpd->timer->Add(size);
 
 	return size;
 }
@@ -478,29 +471,29 @@ httpd_output_pause(struct audio_output *ao)
 	if (httpd->LockHasClients()) {
 		static const char silence[1020] = { 0 };
 		return httpd_output_play(ao, silence, sizeof(silence),
-					 NULL) > 0;
+					 IgnoreError()) > 0;
 	} else {
 		return true;
 	}
 }
 
 inline void
-HttpdOutput::SendTag(const struct tag *tag)
+HttpdOutput::SendTag(const Tag *tag)
 {
 	assert(tag != NULL);
 
-	if (encoder->plugin->tag != NULL) {
+	if (encoder->plugin.tag != nullptr) {
 		/* embed encoder tags */
 
 		/* flush the current stream, and end it */
 
-		encoder_pre_tag(encoder, NULL);
+		encoder_pre_tag(encoder, IgnoreError());
 		BroadcastFromEncoder();
 
 		/* send the tag to the encoder - which starts a new
 		   stream now */
 
-		encoder_tag(encoder, tag, NULL);
+		encoder_tag(encoder, tag, IgnoreError());
 
 		/* the first page generated by the encoder will now be
 		   used as the new "header" page, which is sent to all
@@ -524,7 +517,7 @@ HttpdOutput::SendTag(const struct tag *tag)
 			TAG_NUM_OF_ITEM_TYPES
 		};
 
-		metadata = icy_server_metadata_page(tag, &types[0]);
+		metadata = icy_server_metadata_page(*tag, &types[0]);
 		if (metadata != NULL) {
 			const ScopeLock protect(mutex);
 			for (auto &client : clients)
@@ -534,7 +527,7 @@ HttpdOutput::SendTag(const struct tag *tag)
 }
 
 static void
-httpd_output_tag(struct audio_output *ao, const struct tag *tag)
+httpd_output_tag(struct audio_output *ao, const Tag *tag)
 {
 	HttpdOutput *httpd = Cast(ao);
 

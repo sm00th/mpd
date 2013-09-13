@@ -18,11 +18,12 @@
  */
 
 #include "config.h"
-#include "encoder_list.h"
-#include "encoder_plugin.h"
-#include "audio_format.h"
+#include "EncoderList.hxx"
+#include "EncoderPlugin.hxx"
+#include "AudioFormat.hxx"
 #include "AudioParser.hxx"
-#include "conf.h"
+#include "ConfigData.hxx"
+#include "util/Error.hxx"
 #include "stdbin.h"
 
 #include <glib.h>
@@ -31,24 +32,19 @@
 #include <unistd.h>
 
 static void
-encoder_to_stdout(struct encoder *encoder)
+encoder_to_stdout(Encoder &encoder)
 {
 	size_t length;
 	static char buffer[32768];
 
-	while ((length = encoder_read(encoder, buffer, sizeof(buffer))) > 0) {
-		G_GNUC_UNUSED ssize_t ignored = write(1, buffer, length);
+	while ((length = encoder_read(&encoder, buffer, sizeof(buffer))) > 0) {
+		gcc_unused ssize_t ignored = write(1, buffer, length);
 	}
 }
 
 int main(int argc, char **argv)
 {
-	GError *error = NULL;
-	struct audio_format audio_format;
-	bool ret;
 	const char *encoder_name;
-	const struct encoder_plugin *plugin;
-	struct encoder *encoder;
 	static char buffer[32768];
 
 	/* parse command line */
@@ -63,11 +59,9 @@ int main(int argc, char **argv)
 	else
 		encoder_name = "vorbis";
 
-	audio_format_init(&audio_format, 44100, SAMPLE_FORMAT_S16, 2);
-
 	/* create the encoder */
 
-	plugin = encoder_plugin_get(encoder_name);
+	const auto plugin = encoder_plugin_get(encoder_name);
 	if (plugin == NULL) {
 		g_printerr("No such encoder: %s\n", encoder_name);
 		return 1;
@@ -76,58 +70,51 @@ int main(int argc, char **argv)
 	config_param param;
 	param.AddBlockParam("quality", "5.0", -1);
 
-	encoder = encoder_init(plugin, &param, &error);
+	Error error;
+	const auto encoder = encoder_init(*plugin, param, error);
 	if (encoder == NULL) {
 		g_printerr("Failed to initialize encoder: %s\n",
-			   error->message);
-		g_error_free(error);
+			   error.GetMessage());
 		return 1;
 	}
 
 	/* open the encoder */
 
+	AudioFormat audio_format(44100, SampleFormat::S16, 2);
 	if (argc > 2) {
-		ret = audio_format_parse(&audio_format, argv[2],
-					 false, &error);
-		if (!ret) {
+		if (!audio_format_parse(audio_format, argv[2], false, error)) {
 			g_printerr("Failed to parse audio format: %s\n",
-				   error->message);
-			g_error_free(error);
+				   error.GetMessage());
 			return 1;
 		}
 	}
 
-	if (!encoder_open(encoder, &audio_format, &error)) {
+	if (!encoder_open(encoder, audio_format, error)) {
 		g_printerr("Failed to open encoder: %s\n",
-			   error->message);
-		g_error_free(error);
+			   error.GetMessage());
 		return 1;
 	}
 
-	encoder_to_stdout(encoder);
+	encoder_to_stdout(*encoder);
 
 	/* do it */
 
 	ssize_t nbytes;
 	while ((nbytes = read(0, buffer, sizeof(buffer))) > 0) {
-		ret = encoder_write(encoder, buffer, nbytes, &error);
-		if (!ret) {
+		if (!encoder_write(encoder, buffer, nbytes, error)) {
 			g_printerr("encoder_write() failed: %s\n",
-				   error->message);
-			g_error_free(error);
+				   error.GetMessage());
 			return 1;
 		}
 
-		encoder_to_stdout(encoder);
+		encoder_to_stdout(*encoder);
 	}
 
-	ret = encoder_end(encoder, &error);
-	if (!ret) {
+	if (!encoder_end(encoder, error)) {
 		g_printerr("encoder_flush() failed: %s\n",
-			   error->message);
-		g_error_free(error);
+			   error.GetMessage());
 		return 1;
 	}
 
-	encoder_to_stdout(encoder);
+	encoder_to_stdout(*encoder);
 }

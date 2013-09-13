@@ -44,6 +44,10 @@
 #  endif
 #endif
 
+class Error;
+
+extern const class Domain path_domain;
+
 /**
  * A path name in the native file system character set.
  */
@@ -148,6 +152,9 @@ public:
 	 */
 	gcc_pure
 	static Path FromUTF8(const char *path_utf8);
+
+	gcc_pure
+	static Path FromUTF8(const char *path_utf8, Error &error);
 
 	/**
 	 * Convert the path to UTF-8.

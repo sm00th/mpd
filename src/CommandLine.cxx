@@ -21,22 +21,24 @@
 #include "CommandLine.hxx"
 #include "ls.hxx"
 #include "Log.hxx"
-#include "conf.h"
+#include "ConfigGlobal.hxx"
 #include "DecoderList.hxx"
-#include "decoder_plugin.h"
+#include "DecoderPlugin.hxx"
 #include "OutputList.hxx"
-#include "output_plugin.h"
+#include "OutputPlugin.hxx"
 #include "InputRegistry.hxx"
 #include "InputPlugin.hxx"
 #include "PlaylistRegistry.hxx"
 #include "PlaylistPlugin.hxx"
-#include "mpd_error.h"
 #include "fs/Path.hxx"
 #include "fs/FileSystem.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
+#include "system/FatalError.hxx"
 
 #ifdef ENABLE_ENCODER
-#include "encoder_list.h"
-#include "encoder_plugin.h"
+#include "EncoderList.hxx"
+#include "EncoderPlugin.hxx"
 #endif
 
 #ifdef ENABLE_ARCHIVE
@@ -49,20 +51,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#ifdef G_OS_WIN32
+#ifdef WIN32
 #define CONFIG_FILE_LOCATION		"\\mpd\\mpd.conf"
 #else /* G_OS_WIN32 */
 #define USER_CONFIG_FILE_LOCATION1	".mpdconf"
 #define USER_CONFIG_FILE_LOCATION2	".mpd/mpd.conf"
+#define USER_CONFIG_FILE_LOCATION_XDG	"mpd/mpd.conf"
 #endif
 
-static GQuark
-cmdline_quark(void)
-{
-	return g_quark_from_static_string("cmdline");
-}
+static constexpr Domain cmdline_domain("cmdline");
 
-G_GNUC_NORETURN
+gcc_noreturn
 static void version(void)
 {
 	puts(PACKAGE " (MPD: Music Player Daemon) " VERSION " \n"
@@ -146,9 +145,8 @@ PathBuildChecked(const Path &a, Path::const_pointer b)
 
 bool
 parse_cmdline(int argc, char **argv, struct options *options,
-	      GError **error_r)
+	      Error &error)
 {
-	GError *error = NULL;
 	GOptionContext *context;
 	bool ret;
 	static gboolean option_version,
@@ -182,11 +180,12 @@ parse_cmdline(int argc, char **argv, struct options *options,
 
 	g_option_context_set_summary(context, summary);
 
-	ret = g_option_context_parse(context, &argc, &argv, &error);
+	GError *gerror = nullptr;
+	ret = g_option_context_parse(context, &argc, &argv, &gerror);
 	g_option_context_free(context);
 
 	if (!ret)
-		MPD_ERROR("option parsing failed: %s\n", error->message);
+		FatalError("option parsing failed", gerror);
 
 	if (option_version)
 		version();
@@ -203,11 +202,11 @@ parse_cmdline(int argc, char **argv, struct options *options,
 	} else if (argc <= 1) {
 		/* default configuration file path */
 
-#ifdef G_OS_WIN32
+#ifdef WIN32
 		Path path = PathBuildChecked(Path::FromUTF8(g_get_user_config_dir()),
 					     CONFIG_FILE_LOCATION);
 		if (!path.IsNull() && FileExists(path))
-			return ReadConfigFile(path, error_r);
+			return ReadConfigFile(path, error);
 
 		const char *const*system_config_dirs =
 			g_get_system_config_dirs();
@@ -216,33 +215,36 @@ parse_cmdline(int argc, char **argv, struct options *options,
 			path = PathBuildChecked(Path::FromUTF8(system_config_dirs[i]),
 						CONFIG_FILE_LOCATION);
 			if (!path.IsNull() && FileExists(path))
-				return ReadConfigFile(path, error_r);
+				return ReadConfigFile(path, error);
 		}
 #else /* G_OS_WIN32 */
-		Path path = PathBuildChecked(Path::FromUTF8(g_get_home_dir()),
+		Path path = PathBuildChecked(Path::FromUTF8(g_get_user_config_dir()),
+					     USER_CONFIG_FILE_LOCATION_XDG);
+		if (!path.IsNull() && FileExists(path))
+			return ReadConfigFile(path, error);
+
+		path = PathBuildChecked(Path::FromUTF8(g_get_home_dir()),
 					     USER_CONFIG_FILE_LOCATION1);
 		if (!path.IsNull() && FileExists(path))
-			return ReadConfigFile(path, error_r);
+			return ReadConfigFile(path, error);
 
 		path = PathBuildChecked(Path::FromUTF8(g_get_home_dir()),
 					USER_CONFIG_FILE_LOCATION2);
 		if (!path.IsNull() && FileExists(path))
-			return ReadConfigFile(path, error_r);
+			return ReadConfigFile(path, error);
 
 		path = Path::FromUTF8(SYSTEM_CONFIG_FILE_LOCATION);
 		if (!path.IsNull() && FileExists(path))
-			return ReadConfigFile(path, error_r);
+			return ReadConfigFile(path, error);
 #endif
 
-		g_set_error(error_r, cmdline_quark(), 0,
-			    "No configuration file found");
+		error.Set(cmdline_domain, "No configuration file found");
 		return false;
 	} else if (argc == 2) {
 		/* specified configuration file */
-		return ReadConfigFile(Path::FromFS(argv[1]), error_r);
+		return ReadConfigFile(Path::FromFS(argv[1]), error);
 	} else {
-		g_set_error(error_r, cmdline_quark(), 0,
-			    "too many arguments");
+		error.Set(cmdline_domain, "too many arguments");
 		return false;
 	}
 }

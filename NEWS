@@ -1,6 +1,14 @@
 ver 0.18 (2012/??/??)
+* configuration:
+  - allow tilde paths for socket
+* protocol:
+  - new command "toggleoutput"
+* innput:
+  - curl: enable https
+  - soup: plugin removed
 * decoder:
   - adplug: new decoder plugin using libadplug
+  - ffmpeg: drop support for pre-0.8 ffmpeg
   - flac: require libFLAC 1.2 or newer
   - flac: support FLAC files inside archives
   - opus: new decoder plugin for the Opus codec
@@ -12,12 +20,31 @@ ver 0.18 (2012/??/??)
 * output:
   - new option "tags" may be used to disable sending tags to output
   - alsa: workaround for noise after manual song change
+  - ffado: remove broken plugin
+  - mvp: remove obsolete plugin
 * improved decoder/output error reporting
+* eliminate timer wakeup on idle MPD
 
+ver 0.17.5 (2013/08/04)
+* protocol:
+  - fix "playlistadd" with URI
+  - fix "move" relative to current when there is no current song
+* decoder:
+  - ffmpeg: support "application/flv"
+  - mikmod: adapt to libmikmod 3.2
+* configure.ac:
+  - detect system "ar"
 
-ver 0.17.4 (2013/??/??)
+ver 0.17.4 (2013/04/08)
+* protocol:
+  - allow to omit END in ranges (START:END)
+  - don't emit IDLE_PLAYER before audio format is known
 * decoder:
   - ffmpeg: support float planar audio (ffmpeg 1.1)
+  - ffmpeg: fix AVFrame allocation
+* player:
+  - implement missing "idle" events on output errors
+* clock: fix build failure
 
 ver 0.17.3 (2013/01/06)
 * output:

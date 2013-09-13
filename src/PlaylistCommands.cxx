@@ -32,10 +32,8 @@
 #include "protocol/Result.hxx"
 #include "ls.hxx"
 #include "Playlist.hxx"
-
-extern "C" {
-#include "uri.h"
-}
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -52,7 +50,7 @@ print_spl_list(Client *client, const PlaylistVector &list)
 }
 
 enum command_return
-handle_save(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_save(Client *client, gcc_unused int argc, char *argv[])
 {
 	enum playlist_result result;
 
@@ -67,7 +65,7 @@ handle_load(Client *client, int argc, char *argv[])
 
 	if (argc < 3) {
 		start_index = 0;
-		end_index = G_MAXUINT;
+		end_index = unsigned(-1);
 	} else if (!check_range(client, &start_index, &end_index, argv[2]))
 		return COMMAND_RETURN_ERROR;
 
@@ -80,83 +78,86 @@ handle_load(Client *client, int argc, char *argv[])
 	if (result != PLAYLIST_RESULT_NO_SUCH_LIST)
 		return print_playlist_result(client, result);
 
-	GError *error = NULL;
+	Error error;
 	if (playlist_load_spl(&client->playlist, client->player_control,
 			      argv[1], start_index, end_index,
-			      &error))
+			      error))
 		return COMMAND_RETURN_OK;
 
-	if (error->domain == playlist_quark() &&
-	    error->code == PLAYLIST_RESULT_BAD_NAME)
+	if (error.IsDomain(playlist_domain) &&
+	    error.GetCode() == PLAYLIST_RESULT_BAD_NAME) {
 		/* the message for BAD_NAME is confusing when the
 		   client wants to load a playlist file from the music
-		   directory; patch the GError object to show "no such
+		   directory; patch the Error object to show "no such
 		   playlist" instead */
-		error->code = PLAYLIST_RESULT_NO_SUCH_LIST;
+		Error error2(playlist_domain, PLAYLIST_RESULT_NO_SUCH_LIST,
+			     error.GetMessage());
+		error = std::move(error2);
+	}
 
 	return print_error(client, error);
 }
 
 enum command_return
-handle_listplaylist(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_listplaylist(Client *client, gcc_unused int argc, char *argv[])
 {
 	if (playlist_file_print(client, argv[1], false))
 		return COMMAND_RETURN_OK;
 
-	GError *error = NULL;
-	return spl_print(client, argv[1], false, &error)
+	Error error;
+	return spl_print(client, argv[1], false, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
 handle_listplaylistinfo(Client *client,
-			G_GNUC_UNUSED int argc, char *argv[])
+			gcc_unused int argc, char *argv[])
 {
 	if (playlist_file_print(client, argv[1], true))
 		return COMMAND_RETURN_OK;
 
-	GError *error = NULL;
-	return spl_print(client, argv[1], true, &error)
+	Error error;
+	return spl_print(client, argv[1], true, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
-handle_rm(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_rm(Client *client, gcc_unused int argc, char *argv[])
 {
-	GError *error = NULL;
-	return spl_delete(argv[1], &error)
+	Error error;
+	return spl_delete(argv[1], error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
-handle_rename(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_rename(Client *client, gcc_unused int argc, char *argv[])
 {
-	GError *error = NULL;
-	return spl_rename(argv[1], argv[2], &error)
+	Error error;
+	return spl_rename(argv[1], argv[2], error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
 handle_playlistdelete(Client *client,
-		      G_GNUC_UNUSED int argc, char *argv[]) {
+		      gcc_unused int argc, char *argv[]) {
 	char *playlist = argv[1];
 	unsigned from;
 
 	if (!check_unsigned(client, &from, argv[2]))
 		return COMMAND_RETURN_ERROR;
 
-	GError *error = NULL;
-	return spl_remove_index(playlist, from, &error)
+	Error error;
+	return spl_remove_index(playlist, from, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
-handle_playlistmove(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_playlistmove(Client *client, gcc_unused int argc, char *argv[])
 {
 	char *playlist = argv[1];
 	unsigned from, to;
@@ -166,29 +167,29 @@ handle_playlistmove(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 	if (!check_unsigned(client, &to, argv[3]))
 		return COMMAND_RETURN_ERROR;
 
-	GError *error = NULL;
-	return spl_move_index(playlist, from, to, &error)
+	Error error;
+	return spl_move_index(playlist, from, to, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
-handle_playlistclear(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_playlistclear(Client *client, gcc_unused int argc, char *argv[])
 {
-	GError *error = NULL;
-	return spl_clear(argv[1], &error)
+	Error error;
+	return spl_clear(argv[1], error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
-handle_playlistadd(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_playlistadd(Client *client, gcc_unused int argc, char *argv[])
 {
 	char *playlist = argv[1];
 	char *uri = argv[2];
 
 	bool success;
-	GError *error = NULL;
+	Error error;
 	if (uri_has_scheme(uri)) {
 		if (!uri_supported_scheme(uri)) {
 			command_error(client, ACK_ERROR_NO_EXIST,
@@ -196,12 +197,12 @@ handle_playlistadd(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 			return COMMAND_RETURN_ERROR;
 		}
 
-		success = spl_append_uri(argv[1], playlist, &error);
+		success = spl_append_uri(uri, playlist, error);
 	} else
 		success = search_add_to_playlist(uri, playlist, nullptr,
-						 &error);
+						 error);
 
-	if (!success && error == NULL) {
+	if (!success && !error.IsDefined()) {
 		command_error(client, ACK_ERROR_NO_EXIST,
 			      "directory or file not found");
 		return COMMAND_RETURN_ERROR;
@@ -212,11 +213,11 @@ handle_playlistadd(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 
 enum command_return
 handle_listplaylists(Client *client,
-		     G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		     gcc_unused int argc, gcc_unused char *argv[])
 {
-	GError *error = NULL;
-	const auto list = ListPlaylistFiles(&error);
-	if (list.empty() && error != NULL)
+	Error error;
+	const auto list = ListPlaylistFiles(error);
+	if (list.empty() && error.IsDefined())
 		return print_error(client, error);
 
 	print_spl_list(client, list);

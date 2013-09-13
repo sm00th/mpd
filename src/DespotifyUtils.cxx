@@ -18,8 +18,9 @@
  */
 
 #include "DespotifyUtils.hxx"
-#include "tag.h"
-#include "conf.h"
+#include "tag/Tag.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
 
 #include <glib.h>
 
@@ -32,8 +33,9 @@ static void (*registered_callbacks[8])(struct despotify_session *,
 		int, void *, void *);
 static void *registered_callback_data[8];
 
-static void callback(struct despotify_session* ds, int sig,
-		void* data, G_GNUC_UNUSED void* callback_data)
+static void
+callback(struct despotify_session* ds, int sig,
+	 void *data, gcc_unused void *callback_data)
 {
 	size_t i;
 
@@ -77,28 +79,29 @@ void mpd_despotify_unregister_callback(void (*cb)(struct despotify_session *, in
 }
 
 
-struct tag *mpd_despotify_tag_from_track(struct ds_track *track)
+Tag *
+mpd_despotify_tag_from_track(struct ds_track *track)
 {
 	char tracknum[20];
 	char comment[80];
 	char date[20];
-	struct tag *tag;
 
-	tag = tag_new();
+	Tag *tag = new Tag();
 
 	if (!track->has_meta_data)
 		return tag;
 
-	g_snprintf(tracknum, sizeof(tracknum), "%d", track->tracknumber);
-	g_snprintf(date, sizeof(date), "%d", track->year);
-	g_snprintf(comment, sizeof(comment), "Bitrate %d Kbps, %sgeo restricted",
-			track->file_bitrate / 1000, track->geo_restricted ? "" : "not ");
-	tag_add_item(tag, TAG_TITLE, track->title);
-	tag_add_item(tag, TAG_ARTIST, track->artist->name);
-	tag_add_item(tag, TAG_TRACK, tracknum);
-	tag_add_item(tag, TAG_ALBUM, track->album);
-	tag_add_item(tag, TAG_DATE, date);
-	tag_add_item(tag, TAG_COMMENT, comment);
+	snprintf(tracknum, sizeof(tracknum), "%d", track->tracknumber);
+	snprintf(date, sizeof(date), "%d", track->year);
+	snprintf(comment, sizeof(comment), "Bitrate %d Kbps, %sgeo restricted",
+		 track->file_bitrate / 1000,
+		 track->geo_restricted ? "" : "not ");
+	tag->AddItem(TAG_TITLE, track->title);
+	tag->AddItem(TAG_ARTIST, track->artist->name);
+	tag->AddItem(TAG_TRACK, tracknum);
+	tag->AddItem(TAG_ALBUM, track->album);
+	tag->AddItem(TAG_DATE, date);
+	tag->AddItem(TAG_COMMENT, comment);
 	tag->time = track->length / 1000;
 
 	return tag;

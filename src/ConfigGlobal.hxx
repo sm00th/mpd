@@ -21,18 +21,10 @@
 #define MPD_CONFIG_GLOBAL_HXX
 
 #include "ConfigOption.hxx"
-#include "gerror.h"
 #include "gcc.h"
 
-#include <stdbool.h>
-#include <stddef.h>
-
-#define DEFAULT_PLAYLIST_MAX_LENGTH (1024*16)
-#define DEFAULT_PLAYLIST_SAVE_ABSOLUTE_PATHS false
-
-#ifdef __cplusplus
+class Error;
 class Path;
-#endif
 
 void config_global_init(void);
 void config_global_finish(void);
@@ -43,19 +35,11 @@ void config_global_finish(void);
  */
 void config_global_check(void);
 
-#ifdef __cplusplus
-
 bool
-ReadConfigFile(const Path &path, GError **error_r);
-
-#endif
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+ReadConfigFile(const Path &path, Error &error);
 
 /* don't free the returned value
-   set _last_ to NULL to get first entry */
+   set _last_ to nullptr to get first entry */
 gcc_pure
 const struct config_param *
 config_get_next_param(enum ConfigOption option,
@@ -65,7 +49,7 @@ gcc_pure
 static inline const struct config_param *
 config_get_param(enum ConfigOption option)
 {
-	return config_get_next_param(option, NULL);
+	return config_get_next_param(option, nullptr);
 }
 
 /* Note on gcc_pure: Some of the functions declared pure are not
@@ -82,14 +66,19 @@ config_get_string(enum ConfigOption option, const char *default_value);
 /**
  * Returns an optional configuration variable which contains an
  * absolute path.  If there is a tilde prefix, it is expanded.
- * Returns NULL if the value is not present.  If the path could not be
- * parsed, returns NULL and sets the error.
- *
- * The return value must be freed with g_free().
+ * Returns Path::Null() if the value is not present.  If the path
+ * could not be parsed, returns Path::Null() and sets the error.
  */
-gcc_malloc
-char *
-config_dup_path(enum ConfigOption option, GError **error_r);
+Path
+config_get_path(enum ConfigOption option, Error &error);
+
+/**
+ * Parse a configuration parameter as a path.
+ * If there is a tilde prefix, it is expanded. If the path could
+ * not be parsed, returns Path::Null() and sets the error.
+ */
+Path
+config_parse_path(const struct config_param *param, Error & error_r);
 
 gcc_pure
 unsigned
@@ -101,9 +90,5 @@ config_get_positive(enum ConfigOption option, unsigned default_value);
 
 gcc_pure
 bool config_get_bool(enum ConfigOption option, bool default_value);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

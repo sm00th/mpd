@@ -20,13 +20,13 @@
 #include "config.h" /* must be first for large file support */
 #include "UpdateRemove.hxx"
 #include "Playlist.hxx"
-#include "Partition.hxx"
 #include "GlobalEvents.hxx"
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 
-#include "song.h"
+#include "Song.hxx"
 #include "Main.hxx"
+#include "Instance.hxx"
 
 #ifdef ENABLE_SQLITE
 #include "StickerDatabase.hxx"
@@ -37,7 +37,7 @@
 
 #include <assert.h>
 
-static const struct song *removed_song;
+static const Song *removed_song;
 
 static Mutex remove_mutex;
 static Cond remove_cond;
@@ -53,7 +53,7 @@ song_remove_event(void)
 
 	assert(removed_song != NULL);
 
-	uri = song_get_uri(removed_song);
+	uri = removed_song->GetURI();
 	g_message("removing %s", uri);
 	g_free(uri);
 
@@ -63,7 +63,7 @@ song_remove_event(void)
 		sticker_song_delete(removed_song);
 #endif
 
-	global_partition->DeleteSong(*removed_song);
+	instance->DeleteSong(*removed_song);
 
 	/* clear "removed_song" and send signal to update thread */
 	remove_mutex.lock();
@@ -79,7 +79,7 @@ update_remove_global_init(void)
 }
 
 void
-update_remove_song(const struct song *song)
+update_remove_song(const Song *song)
 {
 	assert(removed_song == NULL);
 

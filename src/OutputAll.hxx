@@ -27,15 +27,12 @@
 #define OUTPUT_ALL_H
 
 #include "replay_gain_info.h"
-#include "gerror.h"
 
-#include <stdbool.h>
-#include <stddef.h>
-
-struct audio_format;
+struct AudioFormat;
 struct music_buffer;
 struct music_chunk;
 struct player_control;
+class Error;
 
 /**
  * Global initialization: load audio outputs from the configuration
@@ -79,16 +76,15 @@ audio_output_all_enable_disable(void);
 /**
  * Opens all audio outputs which are not disabled.
  *
- * @param audio_format the preferred audio format, or NULL to reuse
- * the previous format
+ * @param audio_format the preferred audio format
  * @param buffer the #music_buffer where consumed #music_chunk objects
  * should be returned
  * @return true on success, false on failure
  */
 bool
-audio_output_all_open(const struct audio_format *audio_format,
+audio_output_all_open(AudioFormat audio_format,
 		      struct music_buffer *buffer,
-		      GError **error_r);
+		      Error &error);
 
 /**
  * Closes all audio outputs.
@@ -115,7 +111,7 @@ audio_output_all_set_replay_gain_mode(enum replay_gain_mode mode);
  * (all closed then)
  */
 bool
-audio_output_all_play(struct music_chunk *chunk, GError **error_r);
+audio_output_all_play(struct music_chunk *chunk, Error &error);
 
 /**
  * Checks if the output devices have drained their music pipe, and

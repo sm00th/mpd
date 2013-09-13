@@ -20,56 +20,46 @@
 #include "config.h"
 #include "M3uPlaylistPlugin.hxx"
 #include "PlaylistPlugin.hxx"
-#include "song.h"
-
-extern "C" {
-#include "text_input_stream.h"
-}
+#include "SongEnumerator.hxx"
+#include "Song.hxx"
+#include "TextInputStream.hxx"
 
 #include <glib.h>
 
-struct M3uPlaylist {
-	struct playlist_provider base;
+class M3uPlaylist final : public SongEnumerator {
+	TextInputStream tis;
 
-	struct text_input_stream *tis;
+public:
+	M3uPlaylist(input_stream *is)
+		:tis(is) {
+	}
+
+	virtual Song *NextSong() override;
 };
 
-static struct playlist_provider *
+static SongEnumerator *
 m3u_open_stream(struct input_stream *is)
 {
-	M3uPlaylist *playlist = g_new(M3uPlaylist, 1);
-
-	playlist_provider_init(&playlist->base, &m3u_playlist_plugin);
-	playlist->tis = text_input_stream_new(is);
-
-	return &playlist->base;
+	return new M3uPlaylist(is);
 }
 
-static void
-m3u_close(struct playlist_provider *_playlist)
+Song *
+M3uPlaylist::NextSong()
 {
-	M3uPlaylist *playlist = (M3uPlaylist *)_playlist;
-
-	text_input_stream_free(playlist->tis);
-	g_free(playlist);
-}
-
-static struct song *
-m3u_read(struct playlist_provider *_playlist)
-{
-	M3uPlaylist *playlist = (M3uPlaylist *)_playlist;
-	const char *line;
+	std::string line;
+	const char *line_s;
 
 	do {
-		line = text_input_stream_read(playlist->tis);
-		if (line == NULL)
+		if (!tis.ReadLine(line))
 			return NULL;
 
-		while (*line != 0 && g_ascii_isspace(*line))
-			++line;
-	} while (line[0] == '#' || *line == 0);
+		line_s = line.c_str();
 
-	return song_remote_new(line);
+		while (*line_s != 0 && g_ascii_isspace(*line_s))
+			++line_s;
+	} while (line_s[0] == '#' || *line_s == 0);
+
+	return Song::NewRemote(line_s);
 }
 
 static const char *const m3u_suffixes[] = {
@@ -89,8 +79,6 @@ const struct playlist_plugin m3u_playlist_plugin = {
 	nullptr,
 	nullptr,
 	m3u_open_stream,
-	m3u_close,
-	m3u_read,
 
 	nullptr,
 	m3u_suffixes,

@@ -19,32 +19,34 @@
 
 #include "config.h"
 #include "AudioConfig.hxx"
-#include "audio_format.h"
+#include "AudioFormat.hxx"
 #include "AudioParser.hxx"
-#include "conf.h"
-#include "mpd_error.h"
+#include "ConfigData.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
+#include "util/Error.hxx"
+#include "system/FatalError.hxx"
 
-static struct audio_format configured_audio_format;
+static AudioFormat configured_audio_format;
 
-void getOutputAudioFormat(const struct audio_format *inAudioFormat,
-			  struct audio_format *outAudioFormat)
+AudioFormat
+getOutputAudioFormat(AudioFormat inAudioFormat)
 {
-	*outAudioFormat = *inAudioFormat;
-	audio_format_mask_apply(outAudioFormat, &configured_audio_format);
+	AudioFormat out_audio_format = inAudioFormat;
+	out_audio_format.ApplyMask(configured_audio_format);
+	return out_audio_format;
 }
 
 void initAudioConfig(void)
 {
 	const struct config_param *param = config_get_param(CONF_AUDIO_OUTPUT_FORMAT);
-	GError *error = NULL;
-	bool ret;
 
 	if (param == NULL)
 		return;
 
-	ret = audio_format_parse(&configured_audio_format, param->value,
-				 true, &error);
-	if (!ret)
-		MPD_ERROR("error parsing line %i: %s",
-			  param->line, error->message);
+	Error error;
+	if (!audio_format_parse(configured_audio_format, param->value,
+				true, error))
+		FormatFatalError("error parsing line %i: %s",
+				 param->line, error.GetMessage());
 }

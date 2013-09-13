@@ -17,10 +17,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include "config.h"
 #include "ClientFile.hxx"
 #include "Client.hxx"
-#include "ack.h"
-#include "io_error.h"
+#include "protocol/Ack.hxx"
+#include "fs/Path.hxx"
+#include "fs/FileSystem.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -28,15 +32,14 @@
 #include <unistd.h>
 
 bool
-client_allow_file(const Client *client, const char *path_fs,
-		  GError **error_r)
+client_allow_file(const Client *client, const Path &path_fs,
+		  Error &error)
 {
 #ifdef WIN32
 	(void)client;
 	(void)path_fs;
 
-	g_set_error(error_r, ack_quark(), ACK_ERROR_PERMISSION,
-		    "Access denied");
+	error.Set(ack_domain, ACK_ERROR_PERMISSION, "Access denied");
 	return false;
 #else
 	const int uid = client_get_uid(client);
@@ -47,21 +50,19 @@ client_allow_file(const Client *client, const char *path_fs,
 
 	if (uid <= 0) {
 		/* unauthenticated client */
-		g_set_error(error_r, ack_quark(), ACK_ERROR_PERMISSION,
-			    "Access denied");
+		error.Set(ack_domain, ACK_ERROR_PERMISSION, "Access denied");
 		return false;
 	}
 
 	struct stat st;
-	if (stat(path_fs, &st) < 0) {
-		set_error_errno(error_r);
+	if (!StatFile(path_fs, st)) {
+		error.SetErrno();
 		return false;
 	}
 
 	if (st.st_uid != (uid_t)uid && (st.st_mode & 0444) != 0444) {
 		/* client is not owner */
-		g_set_error(error_r, ack_quark(), ACK_ERROR_PERMISSION,
-			    "Access denied");
+		error.Set(ack_domain, ACK_ERROR_PERMISSION, "Access denied");
 		return false;
 	}
 

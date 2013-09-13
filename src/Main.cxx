@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "Main.hxx"
+#include "Instance.hxx"
 #include "CommandLine.hxx"
 #include "PlaylistFile.hxx"
 #include "PlaylistGlobal.hxx"
@@ -37,8 +38,7 @@
 #include "Partition.hxx"
 #include "Volume.hxx"
 #include "OutputAll.hxx"
-#include "tag.h"
-#include "conf.h"
+#include "tag/TagConfig.hxx"
 #include "replay_gain_config.h"
 #include "Idle.hxx"
 #include "SignalHandlers.hxx"
@@ -52,14 +52,18 @@
 #include "ZeroconfGlue.hxx"
 #include "DecoderList.hxx"
 #include "AudioConfig.hxx"
+#include "pcm/PcmResample.hxx"
+#include "Daemon.hxx"
+#include "system/FatalError.hxx"
+#include "util/Error.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigData.hxx"
+#include "ConfigDefaults.hxx"
+#include "ConfigOption.hxx"
 
 extern "C" {
-#include "daemon.h"
 #include "stats.h"
-#include "pcm_resample.h"
 }
-
-#include "mpd_error.h"
 
 #ifdef ENABLE_INOTIFY
 #include "InotifyUpdate.hxx"
@@ -97,9 +101,7 @@ enum {
 GThread *main_task;
 EventLoop *main_loop;
 
-ClientList *client_list;
-
-Partition *global_partition;
+Instance *instance;
 
 static StateFile *state_file;
 
@@ -109,20 +111,15 @@ static inline GQuark main_quark()
 }
 
 static bool
-glue_daemonize_init(const struct options *options, GError **error_r)
+glue_daemonize_init(const struct options *options, Error &error)
 {
-	GError *error = NULL;
-
-	char *pid_file = config_dup_path(CONF_PID_FILE, &error);
-	if (pid_file == NULL && error != NULL) {
-		g_propagate_error(error_r, error);
+	Path pid_file = config_get_path(CONF_PID_FILE, error);
+	if (pid_file.IsNull() && error.IsDefined())
 		return false;
-	}
 
 	daemonize_init(config_get_string(CONF_USER, NULL),
 		       config_get_string(CONF_GROUP, NULL),
-		       pid_file);
-	g_free(pid_file);
+		       std::move(pid_file));
 
 	if (options->kill)
 		daemonize_kill();
@@ -131,31 +128,24 @@ glue_daemonize_init(const struct options *options, GError **error_r)
 }
 
 static bool
-glue_mapper_init(GError **error_r)
+glue_mapper_init(Error &error)
 {
-	GError *error = NULL;
-	char *music_dir = config_dup_path(CONF_MUSIC_DIR, &error);
-	if (music_dir == NULL && error != NULL) {
-		g_propagate_error(error_r, error);
+	Path music_dir = config_get_path(CONF_MUSIC_DIR, error);
+	if (music_dir.IsNull() && error.IsDefined())
 		return false;
+
+	Path playlist_dir = config_get_path(CONF_PLAYLIST_DIR, error);
+	if (playlist_dir.IsNull() && error.IsDefined())
+		return false;
+
+	if (music_dir.IsNull()) {
+		music_dir = Path::FromUTF8(g_get_user_special_dir(G_USER_DIRECTORY_MUSIC),
+					   error);
+		if (music_dir.IsNull())
+			return false;
 	}
 
-	char *playlist_dir = config_dup_path(CONF_PLAYLIST_DIR, &error);
-	if (playlist_dir == NULL && error != NULL) {
-		g_propagate_error(error_r, error);
-		return false;
-	}
-
-	if (music_dir == NULL)
-		music_dir = g_strdup(g_get_user_special_dir(G_USER_DIRECTORY_MUSIC));
-
-	if (!mapper_init(music_dir, playlist_dir, &error)) {
-		g_propagate_error(error_r, error);
-		return false;
-	}
-
-	g_free(music_dir);
-	g_free(playlist_dir);
+	mapper_init(std::move(music_dir), std::move(playlist_dir));
 	return true;
 }
 
@@ -172,9 +162,6 @@ glue_db_init_and_load(void)
 
 	if (param != NULL && path != NULL)
 		g_message("Found both 'database' and 'db_file' setting - ignoring the latter");
-
-	GError *error = NULL;
-	bool ret;
 
 	if (!mapper_has_music_directory()) {
 		if (param != NULL)
@@ -194,14 +181,14 @@ glue_db_init_and_load(void)
 		param = allocated;
 	}
 
-	if (!DatabaseGlobalInit(param, &error))
-		MPD_ERROR("%s", error->message);
+	Error error;
+	if (!DatabaseGlobalInit(*param, error))
+		FatalError(error);
 
 	delete allocated;
 
-	ret = DatabaseGlobalOpen(&error);
-	if (!ret)
-		MPD_ERROR("%s", error->message);
+	if (!DatabaseGlobalOpen(error))
+		FatalError(error);
 
 	/* run database update after daemonization? */
 	return !db_is_simple() || db_exists();
@@ -214,46 +201,25 @@ static void
 glue_sticker_init(void)
 {
 #ifdef ENABLE_SQLITE
-	GError *error = NULL;
-	char *sticker_file = config_dup_path(CONF_STICKER_FILE, &error);
-	if (sticker_file == NULL && error != NULL)
-		MPD_ERROR("%s", error->message);
+	Error error;
+	Path sticker_file = config_get_path(CONF_STICKER_FILE, error);
+	if (sticker_file.IsNull() && error.IsDefined())
+		FatalError(error);
 
-	if (!sticker_global_init(sticker_file, &error))
-		MPD_ERROR("%s", error->message);
-
-	g_free(sticker_file);
+	if (!sticker_global_init(std::move(sticker_file), error))
+		FatalError(error);
 #endif
 }
 
 static bool
-glue_state_file_init(GError **error_r)
+glue_state_file_init(Error &error)
 {
-	GError *error = NULL;
+	Path path_fs = config_get_path(CONF_STATE_FILE, error);
+	if (path_fs.IsNull())
+		return !error.IsDefined();
 
-	char *path = config_dup_path(CONF_STATE_FILE, &error);
-	if (path == nullptr) {
-		if (error != nullptr) {
-			g_propagate_error(error_r, error);
-			return false;
-		}
-
-		return true;
-	}
-
-	Path path_fs = Path::FromUTF8(path);
-
-	if (path_fs.IsNull()) {
-		g_free(path);
-		g_set_error(error_r, main_quark(), 0,
-			    "Failed to convert state file path to FS encoding");
-		return false;
-	}
-
-	state_file = new StateFile(std::move(path_fs), path,
-				   *global_partition, *main_loop);
-	g_free(path);
-
+	state_file = new StateFile(std::move(path_fs),
+				   *instance->partition, *main_loop);
 	state_file->Read();
 	return true;
 }
@@ -269,16 +235,12 @@ static void winsock_init(void)
 
 	retval = WSAStartup(MAKEWORD(2, 2), &sockinfo);
 	if(retval != 0)
-	{
-		MPD_ERROR("Attempt to open Winsock2 failed; error code %d\n",
-			retval);
-	}
+		FormatFatalError("Attempt to open Winsock2 failed; error code %d",
+				 retval);
 
 	if (LOBYTE(sockinfo.wVersion) != 2)
-	{
-		MPD_ERROR("We use Winsock2 but your version is either too new "
-			  "or old; please install Winsock 2.x\n");
-	}
+		FatalError("We use Winsock2 but your version is either too new "
+			   "or old; please install Winsock 2.x");
 #endif
 }
 
@@ -299,8 +261,9 @@ initialize_decoder_and_player(void)
 	if (param != NULL) {
 		long tmp = strtol(param->value, &test, 10);
 		if (*test != '\0' || tmp <= 0 || tmp == LONG_MAX)
-			MPD_ERROR("buffer size \"%s\" is not a positive integer, "
-				  "line %i\n", param->value, param->line);
+			FormatFatalError("buffer size \"%s\" is not a "
+					 "positive integer, line %i",
+					 param->value, param->line);
 		buffer_size = tmp;
 	} else
 		buffer_size = DEFAULT_BUFFER_SIZE;
@@ -310,15 +273,17 @@ initialize_decoder_and_player(void)
 	buffered_chunks = buffer_size / CHUNK_SIZE;
 
 	if (buffered_chunks >= 1 << 15)
-		MPD_ERROR("buffer size \"%li\" is too big\n", (long)buffer_size);
+		FormatFatalError("buffer size \"%lu\" is too big",
+				 (unsigned long)buffer_size);
 
 	param = config_get_param(CONF_BUFFER_BEFORE_PLAY);
 	if (param != NULL) {
 		perc = strtod(param->value, &test);
 		if (*test != '%' || perc < 0 || perc > 100) {
-			MPD_ERROR("buffered before play \"%s\" is not a positive "
-				  "percentage and less than 100 percent, line %i",
-				  param->value, param->line);
+			FormatFatalError("buffered before play \"%s\" is not "
+					 "a positive percentage and less "
+					 "than 100 percent, line %i",
+					 param->value, param->line);
 		}
 	} else
 		perc = DEFAULT_BUFFER_BEFORE_PLAY;
@@ -331,9 +296,10 @@ initialize_decoder_and_player(void)
 		config_get_positive(CONF_MAX_PLAYLIST_LENGTH,
 				    DEFAULT_PLAYLIST_MAX_LENGTH);
 
-	global_partition = new Partition(max_length,
-					 buffered_chunks,
-					 buffered_before_play);
+	instance->partition = new Partition(*instance,
+					    max_length,
+					    buffered_chunks,
+					    buffered_before_play);
 }
 
 /**
@@ -346,8 +312,14 @@ idle_event_emitted(void)
 	   clients */
 	unsigned flags = idle_get();
 	if (flags != 0)
-		client_list->IdleAdd(flags);
+		instance->client_list->IdleAdd(flags);
+
+	if (flags & (IDLE_PLAYLIST|IDLE_PLAYER|IDLE_MIXER|IDLE_OUTPUT) &&
+	    state_file != nullptr)
+		state_file->CheckModified();
 }
+
+#ifdef WIN32
 
 /**
  * Handler for GlobalEvents::SHUTDOWN.
@@ -357,6 +329,8 @@ shutdown_event_emitted(void)
 {
 	main_loop->Break();
 }
+
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -372,7 +346,7 @@ int mpd_main(int argc, char *argv[])
 	struct options options;
 	clock_t start;
 	bool create_db;
-	GError *error = NULL;
+	Error error;
 	bool success;
 
 	daemonize_close_stdin();
@@ -384,59 +358,60 @@ int mpd_main(int argc, char *argv[])
 
 	g_set_application_name("Music Player Daemon");
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	/* enable GLib's thread safety code */
 	g_thread_init(NULL);
+#endif
 
 	io_thread_init();
 	winsock_init();
 	config_global_init();
 
-	success = parse_cmdline(argc, argv, &options, &error);
+	success = parse_cmdline(argc, argv, &options, error);
 	if (!success) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+		g_warning("%s", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
-	if (!glue_daemonize_init(&options, &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!glue_daemonize_init(&options, error)) {
+		g_printerr("%s\n", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
 	stats_global_init();
-	tag_lib_init();
+	TagLoadConfig();
 
-	if (!log_init(options.verbose, options.log_stderr, &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!log_init(options.verbose, options.log_stderr, error)) {
+		g_warning("%s", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
 	main_task = g_thread_self();
 	main_loop = new EventLoop(EventLoop::Default());
 
-	const unsigned max_clients = config_get_positive(CONF_MAX_CONN, 10);
-	client_list = new ClientList(max_clients);
+	instance = new Instance();
 
-	success = listen_global_init(&error);
+	const unsigned max_clients = config_get_positive(CONF_MAX_CONN, 10);
+	instance->client_list = new ClientList(max_clients);
+
+	success = listen_global_init(error);
 	if (!success) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+		g_warning("%s", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
 	daemonize_set_user();
 
-	GlobalEvents::Initialize();
+	GlobalEvents::Initialize(*main_loop);
 	GlobalEvents::Register(GlobalEvents::IDLE, idle_event_emitted);
+#ifdef WIN32
 	GlobalEvents::Register(GlobalEvents::SHUTDOWN, shutdown_event_emitted);
+#endif
 
 	Path::GlobalInit();
 
-	if (!glue_mapper_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!glue_mapper_init(error)) {
+		g_printerr("%s\n", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
@@ -447,9 +422,8 @@ int mpd_main(int argc, char *argv[])
 	archive_plugin_init_all();
 #endif
 
-	if (!pcm_resample_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!pcm_resample_global_init(error)) {
+		g_warning("%s", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
@@ -464,13 +438,12 @@ int mpd_main(int argc, char *argv[])
 	initialize_decoder_and_player();
 	volume_init();
 	initAudioConfig();
-	audio_output_all_init(&global_partition->pc);
+	audio_output_all_init(&instance->partition->pc);
 	client_manager_init();
 	replay_gain_global_init();
 
-	if (!input_stream_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!input_stream_global_init(error)) {
+		g_warning("%s", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
@@ -480,33 +453,28 @@ int mpd_main(int argc, char *argv[])
 
 	setup_log_output(options.log_stderr);
 
-	initSigHandlers();
+	SignalHandlersInit(*main_loop);
 
-	if (!io_thread_start(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		return EXIT_FAILURE;
-	}
+	io_thread_start();
 
 	ZeroconfInit(*main_loop);
 
-	player_create(&global_partition->pc);
+	player_create(&instance->partition->pc);
 
 	if (create_db) {
 		/* the database failed to load: recreate the
 		   database */
 		unsigned job = update_enqueue(NULL, true);
 		if (job == 0)
-			MPD_ERROR("directory update failed");
+			FatalError("directory update failed");
 	}
 
-	if (!glue_state_file_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!glue_state_file_init(error)) {
+		g_printerr("%s\n", error.GetMessage());
 		return EXIT_FAILURE;
 	}
 
-	audio_output_all_set_replay_gain_mode(replay_gain_get_real_mode(global_partition->playlist.queue.random));
+	audio_output_all_set_replay_gain_mode(replay_gain_get_real_mode(instance->partition->playlist.queue.random));
 
 	success = config_get_bool(CONF_AUTO_UPDATE, false);
 #ifdef ENABLE_INOTIFY
@@ -522,7 +490,7 @@ int mpd_main(int argc, char *argv[])
 
 	/* enable all audio outputs (if not already done by
 	   playlist_state_restore() */
-	global_partition->pc.UpdateAudio();
+	instance->partition->pc.UpdateAudio();
 
 #ifdef WIN32
 	win32_app_started();
@@ -546,10 +514,10 @@ int mpd_main(int argc, char *argv[])
 		delete state_file;
 	}
 
-	global_partition->pc.Kill();
+	instance->partition->pc.Kill();
 	ZeroconfDeinit();
 	listen_global_finish();
-	delete client_list;
+	delete instance->client_list;
 
 	start = clock();
 	DatabaseGlobalDeinit();
@@ -567,7 +535,7 @@ int mpd_main(int argc, char *argv[])
 	audio_output_all_finish();
 	volume_finish();
 	mapper_finish();
-	delete global_partition;
+	delete instance->partition;
 	command_finish();
 	update_global_finish();
 	decoder_plugin_deinit_all();
@@ -577,6 +545,8 @@ int mpd_main(int argc, char *argv[])
 	config_global_finish();
 	stats_global_finish();
 	io_thread_deinit();
+	SignalHandlersFinish();
+	delete instance;
 	delete main_loop;
 	daemonize_finish();
 #ifdef WIN32

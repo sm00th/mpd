@@ -19,15 +19,12 @@
 
 #include "config.h"
 #include "WavpackDecoderPlugin.hxx"
-#include "decoder_api.h"
+#include "DecoderAPI.hxx"
 #include "InputStream.hxx"
-
-extern "C" {
-#include "audio_check.h"
-}
-
-#include "tag_handler.h"
-#include "tag_ape.h"
+#include "CheckAudioFormat.hxx"
+#include "tag/TagHandler.hxx"
+#include "tag/ApeTag.hxx"
+#include "util/Error.hxx"
 
 #include <wavpack/wavpack.h>
 #include <glib.h>
@@ -96,7 +93,7 @@ format_samples_int(int bytes_per_sample, void *buffer, uint32_t count)
  * This function converts floating point sample data to 24-bit integer.
  */
 static void
-format_samples_float(G_GNUC_UNUSED int bytes_per_sample, void *buffer,
+format_samples_float(gcc_unused int bytes_per_sample, void *buffer,
 		     uint32_t count)
 {
 	float *p = (float *)buffer;
@@ -110,27 +107,27 @@ format_samples_float(G_GNUC_UNUSED int bytes_per_sample, void *buffer,
 /**
  * Choose a MPD sample format from libwavpacks' number of bits.
  */
-static enum sample_format
+static SampleFormat
 wavpack_bits_to_sample_format(bool is_float, int bytes_per_sample)
 {
 	if (is_float)
-		return SAMPLE_FORMAT_FLOAT;
+		return SampleFormat::FLOAT;
 
 	switch (bytes_per_sample) {
 	case 1:
-		return SAMPLE_FORMAT_S8;
+		return SampleFormat::S8;
 
 	case 2:
-		return SAMPLE_FORMAT_S16;
+		return SampleFormat::S16;
 
 	case 3:
-		return SAMPLE_FORMAT_S24_P32;
+		return SampleFormat::S24_P32;
 
 	case 4:
-		return SAMPLE_FORMAT_S32;
+		return SampleFormat::S32;
 
 	default:
-		return SAMPLE_FORMAT_UNDEFINED;
+		return SampleFormat::UNDEFINED;
 	}
 }
 
@@ -141,10 +138,9 @@ wavpack_bits_to_sample_format(bool is_float, int bytes_per_sample)
 static void
 wavpack_decode(struct decoder *decoder, WavpackContext *wpc, bool can_seek)
 {
-	GError *error = NULL;
 	bool is_float;
-	enum sample_format sample_format;
-	struct audio_format audio_format;
+	SampleFormat sample_format;
+	AudioFormat audio_format;
 	format_samples_t format_samples;
 	float total_time;
 	int bytes_per_sample, output_sample_size;
@@ -154,12 +150,12 @@ wavpack_decode(struct decoder *decoder, WavpackContext *wpc, bool can_seek)
 		wavpack_bits_to_sample_format(is_float,
 					      WavpackGetBytesPerSample(wpc));
 
-	if (!audio_format_init_checked(&audio_format,
+	Error error;
+	if (!audio_format_init_checked(audio_format,
 				       WavpackGetSampleRate(wpc),
 				       sample_format,
-				       WavpackGetNumChannels(wpc), &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+				       WavpackGetNumChannels(wpc), error)) {
+		g_warning("%s", error.GetMessage());
 		return;
 	}
 
@@ -172,14 +168,14 @@ wavpack_decode(struct decoder *decoder, WavpackContext *wpc, bool can_seek)
 	total_time = WavpackGetNumSamples(wpc);
 	total_time /= audio_format.sample_rate;
 	bytes_per_sample = WavpackGetBytesPerSample(wpc);
-	output_sample_size = audio_format_frame_size(&audio_format);
+	output_sample_size = audio_format.GetFrameSize();
 
 	/* wavpack gives us all kind of samples in a 32-bit space */
 	int32_t chunk[1024];
 	const uint32_t samples_requested = G_N_ELEMENTS(chunk) /
 		audio_format.channels;
 
-	decoder_initialized(decoder, &audio_format, can_seek, total_time);
+	decoder_initialized(decoder, audio_format, can_seek, total_time);
 
 	enum decoder_command cmd = decoder_get_command(decoder);
 	while (cmd != DECODE_COMMAND_STOP) {
@@ -405,15 +401,13 @@ wavpack_input_get_pos(void *id)
 static int
 wavpack_input_set_pos_abs(void *id, uint32_t pos)
 {
-	return input_stream_lock_seek(wpin(id)->is, pos, SEEK_SET, NULL)
-		? 0 : -1;
+	return wpin(id)->is->LockSeek(pos, SEEK_SET, IgnoreError()) ? 0 : -1;
 }
 
 static int
 wavpack_input_set_pos_rel(void *id, int32_t delta, int mode)
 {
-	return input_stream_lock_seek(wpin(id)->is, delta, mode, NULL)
-		? 0 : -1;
+	return wpin(id)->is->LockSeek(delta, mode, IgnoreError()) ? 0 : -1;
 }
 
 static int
@@ -480,7 +474,8 @@ wavpack_open_wvc(struct decoder *decoder, const char *uri,
 		return nullptr;
 
 	wvc_url = g_strconcat(uri, "c", NULL);
-	is_wvc = input_stream_open(wvc_url, mutex, cond, NULL);
+
+	is_wvc = input_stream::Open(wvc_url, mutex, cond, IgnoreError());
 	g_free(wvc_url);
 
 	if (is_wvc == NULL)
@@ -494,7 +489,7 @@ wavpack_open_wvc(struct decoder *decoder, const char *uri,
 		decoder, is_wvc, &first_byte, sizeof(first_byte)
 	);
 	if (nbytes == 0) {
-		input_stream_close(is_wvc);
+		is_wvc->Close();
 		return NULL;
 	}
 
@@ -545,7 +540,7 @@ wavpack_streamdecode(struct decoder * decoder, struct input_stream *is)
 
 	WavpackCloseFile(wpc);
 	if (open_flags & OPEN_WVC) {
-		input_stream_close(is_wvc);
+		is_wvc->Close();
 	}
 }
 

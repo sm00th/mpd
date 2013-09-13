@@ -26,14 +26,15 @@
 #include "DatabaseSimple.hxx"
 #include "Idle.hxx"
 #include "GlobalEvents.hxx"
+#include "util/Error.hxx"
 
 extern "C" {
 #include "stats.h"
 }
 
 #include "Main.hxx"
-#include "Partition.hxx"
-#include "mpd_error.h"
+#include "Instance.hxx"
+#include "system/FatalError.hxx"
 
 #include <glib.h>
 
@@ -77,12 +78,10 @@ static void * update_task(void *_path)
 	modified = update_walk(path, discard);
 
 	if (modified || !db_exists()) {
-		GError *error = NULL;
-		if (!db_save(&error)) {
+		Error error;
+		if (!db_save(error))
 			g_warning("Failed to save database: %s",
-				  error->message);
-			g_error_free(error);
-		}
+				  error.GetMessage());
 	}
 
 	if (path != NULL && *path != 0)
@@ -99,16 +98,19 @@ static void * update_task(void *_path)
 static void
 spawn_update_task(const char *path)
 {
-	GError *e = NULL;
-
 	assert(g_thread_self() == main_task);
 
 	progress = UPDATE_PROGRESS_RUNNING;
 	modified = false;
 
+#if GLIB_CHECK_VERSION(2,32,0)
+	update_thr = g_thread_new("updadte", update_task, g_strdup(path));
+#else
+	GError *e = NULL;
 	update_thr = g_thread_create(update_task, g_strdup(path), TRUE, &e);
 	if (update_thr == NULL)
-		MPD_ERROR("Failed to spawn update task: %s", e->message);
+		FatalError("Failed to spawn update task", e);
+#endif
 
 	if (++update_task_id > update_task_id_max)
 		update_task_id = 1;
@@ -153,11 +155,9 @@ static void update_finished_event(void)
 
 	idle_add(IDLE_UPDATE);
 
-	if (modified) {
+	if (modified)
 		/* send "idle" events */
-		global_partition->playlist.FullIncrementVersions();
-		idle_add(IDLE_DATABASE);
-	}
+		instance->DatabaseModified();
 
 	path = update_queue_shift(&discard);
 	if (path != NULL) {

@@ -20,9 +20,10 @@
 #include "config.h"
 #include "DespotifyPlaylistPlugin.hxx"
 #include "DespotifyUtils.hxx"
-#include "MemoryPlaylistProvider.hxx"
-#include "tag.h"
-#include "song.h"
+#include "PlaylistPlugin.hxx"
+#include "MemorySongEnumerator.hxx"
+#include "tag/Tag.hxx"
+#include "Song.hxx"
 
 extern "C" {
 #include <despotify.h>
@@ -37,12 +38,12 @@ static void
 add_song(std::forward_list<SongPointer> &songs, struct ds_track *track)
 {
 	const char *dsp_scheme = despotify_playlist_plugin.schemes[0];
-	struct song *song;
+	Song *song;
 	char uri[128];
 	char *ds_uri;
 
 	/* Create a spt://... URI for MPD */
-	g_snprintf(uri, sizeof(uri), "%s://", dsp_scheme);
+	snprintf(uri, sizeof(uri), "%s://", dsp_scheme);
 	ds_uri = uri + strlen(dsp_scheme) + 3;
 
 	if (despotify_track_to_uri(track, ds_uri) != ds_uri) {
@@ -51,7 +52,7 @@ add_song(std::forward_list<SongPointer> &songs, struct ds_track *track)
 		return;
 	}
 
-	song = song_remote_new(uri);
+	song = Song::NewRemote(uri);
 	song->tag = mpd_despotify_tag_from_track(track);
 
 	songs.emplace_front(song);
@@ -86,7 +87,7 @@ parse_playlist(struct despotify_session *session,
 	return true;
 }
 
-static struct playlist_provider *
+static SongEnumerator *
 despotify_playlist_open_uri(const char *url,
 			    gcc_unused Mutex &mutex, gcc_unused Cond &cond)
 {
@@ -122,7 +123,7 @@ despotify_playlist_open_uri(const char *url,
 		return nullptr;
 
 	songs.reverse();
-	return new MemoryPlaylistProvider(std::move(songs));
+	return new MemorySongEnumerator(std::move(songs));
 }
 
 static const char *const despotify_schemes[] = {
@@ -136,8 +137,6 @@ const struct playlist_plugin despotify_playlist_plugin = {
 	nullptr,
 	nullptr,
 	despotify_playlist_open_uri,
-	nullptr,
-	nullptr,
 	nullptr,
 
 	despotify_schemes,

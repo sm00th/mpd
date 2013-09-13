@@ -19,35 +19,36 @@
 
 #include "config.h"
 #include "DecoderList.hxx"
-#include "decoder_plugin.h"
-#include "conf.h"
-#include "mpd_error.h"
-#include "decoder/pcm_decoder_plugin.h"
-#include "decoder/dsdiff_decoder_plugin.h"
-#include "decoder/dsf_decoder_plugin.h"
-#include "decoder/FLACDecoderPlugin.h"
+#include "DecoderPlugin.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigData.hxx"
+#include "decoder/AudiofileDecoderPlugin.hxx"
+#include "decoder/PcmDecoderPlugin.hxx"
+#include "decoder/DsdiffDecoderPlugin.hxx"
+#include "decoder/DsfDecoderPlugin.hxx"
+#include "decoder/FlacDecoderPlugin.h"
 #include "decoder/OpusDecoderPlugin.h"
 #include "decoder/VorbisDecoderPlugin.h"
 #include "decoder/AdPlugDecoderPlugin.h"
 #include "decoder/WavpackDecoderPlugin.hxx"
 #include "decoder/FfmpegDecoderPlugin.hxx"
+#include "decoder/GmeDecoderPlugin.hxx"
+#include "decoder/FaadDecoderPlugin.hxx"
+#include "decoder/MadDecoderPlugin.hxx"
+#include "decoder/SndfileDecoderPlugin.hxx"
+#include "decoder/Mpg123DecoderPlugin.hxx"
+#include "decoder/WildmidiDecoderPlugin.hxx"
+#include "decoder/MikmodDecoderPlugin.hxx"
+#include "decoder/ModplugDecoderPlugin.hxx"
+#include "decoder/MpcdecDecoderPlugin.hxx"
+#include "decoder/FluidsynthDecoderPlugin.hxx"
+#include "system/FatalError.hxx"
 
 #include <glib.h>
 
 #include <string.h>
 
-extern const struct decoder_plugin mad_decoder_plugin;
-extern const struct decoder_plugin mpg123_decoder_plugin;
-extern const struct decoder_plugin sndfile_decoder_plugin;
-extern const struct decoder_plugin audiofile_decoder_plugin;
-extern const struct decoder_plugin faad_decoder_plugin;
-extern const struct decoder_plugin mpcdec_decoder_plugin;
-extern const struct decoder_plugin modplug_decoder_plugin;
-extern const struct decoder_plugin mikmod_decoder_plugin;
 extern const struct decoder_plugin sidplay_decoder_plugin;
-extern const struct decoder_plugin wildmidi_decoder_plugin;
-extern const struct decoder_plugin fluidsynth_decoder_plugin;
-extern const struct decoder_plugin gme_decoder_plugin;
 
 const struct decoder_plugin *const decoder_plugins[] = {
 #ifdef HAVE_MAD
@@ -201,11 +202,10 @@ decoder_plugin_config(const char *plugin_name)
 	const struct config_param *param = NULL;
 
 	while ((param = config_get_next_param(CONF_DECODER, param)) != NULL) {
-		const char *name =
-			config_get_block_string(param, "plugin", NULL);
+		const char *name = param->GetBlockValue("plugin");
 		if (name == NULL)
-			MPD_ERROR("decoder configuration without 'plugin' name in line %d",
-				  param->line);
+			FormatFatalError("decoder configuration without 'plugin' name in line %d",
+					 param->line);
 
 		if (strcmp(name, plugin_name) == 0)
 			return param;
@@ -216,16 +216,20 @@ decoder_plugin_config(const char *plugin_name)
 
 void decoder_plugin_init_all(void)
 {
+	struct config_param empty;
+
 	for (unsigned i = 0; decoder_plugins[i] != NULL; ++i) {
 		const struct decoder_plugin *plugin = decoder_plugins[i];
 		const struct config_param *param =
 			decoder_plugin_config(plugin->name);
 
-		if (!config_get_block_bool(param, "enabled", true))
+		if (param == nullptr)
+			param = &empty;
+		else if (!param->GetBlockValue("enabled", true))
 			/* the plugin is disabled in mpd.conf */
 			continue;
 
-		if (decoder_plugin_init(plugin, param))
+		if (decoder_plugin_init(plugin, *param))
 			decoder_plugins_enabled[i] = true;
 	}
 }

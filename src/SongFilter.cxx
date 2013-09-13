@@ -19,12 +19,13 @@
 
 #include "config.h"
 #include "SongFilter.hxx"
-#include "song.h"
-#include "tag.h"
+#include "Song.hxx"
+#include "tag/Tag.hxx"
 
 #include <glib.h>
 
 #include <assert.h>
+#include <string.h>
 #include <stdlib.h>
 
 #define LOCATE_TAG_FILE_KEY     "file"
@@ -74,14 +75,14 @@ SongFilter::Item::StringMatch(const char *s) const
 }
 
 bool
-SongFilter::Item::Match(const tag_item &item) const
+SongFilter::Item::Match(const TagItem &item) const
 {
 	return (tag == LOCATE_TAG_ANY_TYPE || (unsigned)item.type == tag) &&
 		StringMatch(item.value);
 }
 
 bool
-SongFilter::Item::Match(const struct tag &_tag) const
+SongFilter::Item::Match(const Tag &_tag) const
 {
 	bool visited_types[TAG_NUM_OF_ITEM_TYPES];
 	std::fill(visited_types, visited_types + TAG_NUM_OF_ITEM_TYPES, false);
@@ -107,10 +108,10 @@ SongFilter::Item::Match(const struct tag &_tag) const
 }
 
 bool
-SongFilter::Item::Match(const song &song) const
+SongFilter::Item::Match(const Song &song) const
 {
 	if (tag == LOCATE_TAG_FILE_TYPE || tag == LOCATE_TAG_ANY_TYPE) {
-		char *uri = song_get_uri(&song);
+		char *uri = song.GetURI();
 		const bool result = StringMatch(uri);
 		g_free(uri);
 
@@ -156,7 +157,7 @@ SongFilter::Parse(unsigned argc, char *argv[], bool fold_case)
 }
 
 bool
-SongFilter::Match(const song &song) const
+SongFilter::Match(const Song &song) const
 {
 	for (const auto &i : items)
 		if (!i.Match(song))

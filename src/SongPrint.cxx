@@ -19,23 +19,20 @@
 
 #include "config.h"
 #include "SongPrint.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "Directory.hxx"
 #include "TimePrint.hxx"
 #include "TagPrint.hxx"
 #include "Mapper.hxx"
 #include "Client.hxx"
-
-extern "C" {
-#include "uri.h"
-}
+#include "util/UriUtil.hxx"
 
 #include <glib.h>
 
 void
-song_print_uri(Client *client, struct song *song)
+song_print_uri(Client *client, Song *song)
 {
-	if (song_in_database(song) && !song->parent->IsRoot()) {
+	if (song->IsInDatabase() && !song->parent->IsRoot()) {
 		client_printf(client, "%s%s/%s\n", SONG_FILE,
 			      song->parent->GetPath(), song->uri);
 	} else {
@@ -54,7 +51,7 @@ song_print_uri(Client *client, struct song *song)
 }
 
 void
-song_print_info(Client *client, struct song *song)
+song_print_info(Client *client, Song *song)
 {
 	song_print_uri(client, song);
 
@@ -72,6 +69,6 @@ song_print_info(Client *client, struct song *song)
 	if (song->mtime > 0)
 		time_print(client, "Last-Modified", song->mtime);
 
-	if (song->tag)
-		tag_print(client, song->tag);
+	if (song->tag != nullptr)
+		tag_print(client, *song->tag);
 }

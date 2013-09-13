@@ -28,24 +28,26 @@
 
 #include "check.h"
 #include "thread/Mutex.hxx"
+#include "gcc.h"
 
-#include <glib.h>
 #include <assert.h>
 
 extern Mutex db_mutex;
 
 #ifndef NDEBUG
 
-extern GThread *db_mutex_holder;
+#include "thread/Id.hxx"
+
+extern ThreadId db_mutex_holder;
 
 /**
  * Does the current thread hold the database lock?
  */
-G_GNUC_PURE
+gcc_pure
 static inline bool
 holding_db_lock(void)
 {
-	return db_mutex_holder == g_thread_self();
+	return db_mutex_holder.IsInside();
 }
 
 #endif
@@ -61,9 +63,9 @@ db_lock(void)
 
 	db_mutex.lock();
 
-	assert(db_mutex_holder == NULL);
+	assert(db_mutex_holder.IsNull());
 #ifndef NDEBUG
-	db_mutex_holder = g_thread_self();
+	db_mutex_holder = ThreadId::GetCurrent();
 #endif
 }
 
@@ -75,13 +77,11 @@ db_unlock(void)
 {
 	assert(holding_db_lock());
 #ifndef NDEBUG
-	db_mutex_holder = NULL;
+	db_mutex_holder = ThreadId::Null();
 #endif
 
 	db_mutex.unlock();
 }
-
-#ifdef __cplusplus
 
 class ScopeDatabaseLock {
 public:
@@ -93,7 +93,5 @@ public:
 		db_unlock();
 	}
 };
-
-#endif
 
 #endif

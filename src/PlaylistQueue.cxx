@@ -23,28 +23,26 @@
 #include "PlaylistAny.hxx"
 #include "PlaylistSong.hxx"
 #include "Playlist.hxx"
-#include "input_stream.h"
-
-extern "C" {
-#include "song.h"
-}
+#include "InputStream.hxx"
+#include "SongEnumerator.hxx"
+#include "Song.hxx"
 
 enum playlist_result
-playlist_load_into_queue(const char *uri, struct playlist_provider *source,
+playlist_load_into_queue(const char *uri, SongEnumerator &e,
 			 unsigned start_index, unsigned end_index,
 			 struct playlist *dest, struct player_control *pc,
 			 bool secure)
 {
 	enum playlist_result result;
-	struct song *song;
+	Song *song;
 	char *base_uri = uri != NULL ? g_path_get_dirname(uri) : NULL;
 
 	for (unsigned i = 0;
-	     i < end_index && (song = playlist_plugin_read(source)) != NULL;
+	     i < end_index && (song = e.NextSong()) != NULL;
 	     ++i) {
 		if (i < start_index) {
 			/* skip songs before the start index */
-			song_free(song);
+			song->Free();
 			continue;
 		}
 
@@ -53,7 +51,7 @@ playlist_load_into_queue(const char *uri, struct playlist_provider *source,
 			continue;
 
 		result = dest->AppendSong(*pc, song);
-		song_free(song);
+		song->Free();
 		if (result != PLAYLIST_RESULT_SUCCESS) {
 			g_free(base_uri);
 			return result;
@@ -75,18 +73,18 @@ playlist_open_into_queue(const char *uri,
 	Cond cond;
 
 	struct input_stream *is;
-	struct playlist_provider *playlist =
-		playlist_open_any(uri, mutex, cond, &is);
+	auto playlist = playlist_open_any(uri, mutex, cond, &is);
 	if (playlist == NULL)
 		return PLAYLIST_RESULT_NO_SUCH_LIST;
 
 	enum playlist_result result =
-		playlist_load_into_queue(uri, playlist, start_index, end_index,
+		playlist_load_into_queue(uri, *playlist,
+					 start_index, end_index,
 					 dest, pc, secure);
-	playlist_plugin_close(playlist);
+	delete playlist;
 
 	if (is != NULL)
-		input_stream_close(is);
+		is->Close();
 
 	return result;
 }

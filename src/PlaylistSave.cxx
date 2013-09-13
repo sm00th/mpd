@@ -21,27 +21,25 @@
 #include "PlaylistSave.hxx"
 #include "PlaylistFile.hxx"
 #include "Playlist.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "Mapper.hxx"
 #include "Idle.hxx"
 #include "fs/Path.hxx"
 #include "fs/FileSystem.hxx"
-
-extern "C" {
-#include "uri.h"
-}
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
 void
-playlist_print_song(FILE *file, const struct song *song)
+playlist_print_song(FILE *file, const Song *song)
 {
-	if (playlist_saveAbsolutePaths && song_in_database(song)) {
+	if (playlist_saveAbsolutePaths && song->IsInDatabase()) {
 		const Path path = map_song_fs(song);
 		if (!path.IsNull())
 			fprintf(file, "%s\n", path.c_str());
 	} else {
-		char *uri = song_get_uri(song);
+		char *uri = song->GetURI();
 		const Path uri_fs = Path::FromUTF8(uri);
 		g_free(uri);
 
@@ -102,14 +100,11 @@ bool
 playlist_load_spl(struct playlist *playlist, struct player_control *pc,
 		  const char *name_utf8,
 		  unsigned start_index, unsigned end_index,
-		  GError **error_r)
+		  Error &error)
 {
-	GError *error = NULL;
-	PlaylistFileContents contents = LoadPlaylistFile(name_utf8, &error);
-	if (contents.empty() && error != nullptr) {
-		g_propagate_error(error_r, error);
+	PlaylistFileContents contents = LoadPlaylistFile(name_utf8, error);
+	if (contents.empty() && error.IsDefined())
 		return false;
-	}
 
 	if (end_index > contents.size())
 		end_index = contents.size();

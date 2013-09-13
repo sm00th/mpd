@@ -19,7 +19,10 @@
 
 #include "config.h"
 #include "StickerDatabase.hxx"
+#include "fs/Path.hxx"
 #include "Idle.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
 #include <string>
 #include <map>
@@ -80,23 +83,19 @@ static const char sticker_sql_create[] =
 static sqlite3 *sticker_db;
 static sqlite3_stmt *sticker_stmt[G_N_ELEMENTS(sticker_sql)];
 
-static GQuark
-sticker_quark(void)
-{
-	return g_quark_from_static_string("sticker");
-}
+static constexpr Domain sticker_domain("sticker");
 
 static sqlite3_stmt *
-sticker_prepare(const char *sql, GError **error_r)
+sticker_prepare(const char *sql, Error &error)
 {
 	int ret;
 	sqlite3_stmt *stmt;
 
 	ret = sqlite3_prepare_v2(sticker_db, sql, -1, &stmt, NULL);
 	if (ret != SQLITE_OK) {
-		g_set_error(error_r, sticker_quark(), ret,
-			    "sqlite3_prepare_v2() failed: %s",
-			    sqlite3_errmsg(sticker_db));
+		error.Format(sticker_domain, ret,
+			     "sqlite3_prepare_v2() failed: %s",
+			     sqlite3_errmsg(sticker_db));
 		return NULL;
 	}
 
@@ -104,21 +103,22 @@ sticker_prepare(const char *sql, GError **error_r)
 }
 
 bool
-sticker_global_init(const char *path, GError **error_r)
+sticker_global_init(Path &&path, Error &error)
 {
 	int ret;
 
-	if (path == NULL)
+	if (path.IsNull())
 		/* not configured */
 		return true;
 
 	/* open/create the sqlite database */
 
-	ret = sqlite3_open(path, &sticker_db);
+	ret = sqlite3_open(path.c_str(), &sticker_db);
 	if (ret != SQLITE_OK) {
-		g_set_error(error_r, sticker_quark(), ret,
+		const std::string utf8 = path.ToUTF8();
+		error.Format(sticker_domain, ret,
 			    "Failed to open sqlite database '%s': %s",
-			    path, sqlite3_errmsg(sticker_db));
+			    utf8.c_str(), sqlite3_errmsg(sticker_db));
 		return false;
 	}
 
@@ -126,9 +126,9 @@ sticker_global_init(const char *path, GError **error_r)
 
 	ret = sqlite3_exec(sticker_db, sticker_sql_create, NULL, NULL, NULL);
 	if (ret != SQLITE_OK) {
-		g_set_error(error_r, sticker_quark(), ret,
-			    "Failed to create sticker table: %s",
-			    sqlite3_errmsg(sticker_db));
+		error.Format(sticker_domain, ret,
+			     "Failed to create sticker table: %s",
+			     sqlite3_errmsg(sticker_db));
 		return false;
 	}
 
@@ -137,7 +137,7 @@ sticker_global_init(const char *path, GError **error_r)
 	for (unsigned i = 0; i < G_N_ELEMENTS(sticker_sql); ++i) {
 		assert(sticker_sql[i] != NULL);
 
-		sticker_stmt[i] = sticker_prepare(sticker_sql[i], error_r);
+		sticker_stmt[i] = sticker_prepare(sticker_sql[i], error);
 		if (sticker_stmt[i] == NULL)
 			return false;
 	}

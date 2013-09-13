@@ -28,13 +28,11 @@
 #include "MessageCommands.hxx"
 #include "OtherCommands.hxx"
 #include "Permission.hxx"
-#include "tag.h"
+#include "tag/TagType.h"
 #include "protocol/Result.hxx"
 #include "Client.hxx"
-
-extern "C" {
-#include "tokenizer.h"
-}
+#include "util/Tokenizer.hxx"
+#include "util/Error.hxx"
 
 #ifdef ENABLE_SQLITE
 #include "StickerCommands.hxx"
@@ -63,12 +61,10 @@ struct command {
 
 /* don't be fooled, this is the command handler for "commands" command */
 static enum command_return
-handle_commands(Client *client,
-		G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[]);
+handle_commands(Client *client, int argc, char *argv[]);
 
 static enum command_return
-handle_not_commands(Client *client,
-		    G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[]);
+handle_not_commands(Client *client, int argc, char *argv[]);
 
 /**
  * The command registry.
@@ -162,6 +158,7 @@ static const struct command commands[] = {
 	{ "swap", PERMISSION_CONTROL, 2, 2, handle_swap },
 	{ "swapid", PERMISSION_CONTROL, 2, 2, handle_swapid },
 	{ "tagtypes", PERMISSION_READ, 0, 0, handle_tagtypes },
+	{ "toggleoutput", PERMISSION_ADMIN, 1, 1, handle_toggleoutput },
 	{ "unsubscribe", PERMISSION_READ, 1, 1, handle_unsubscribe },
 	{ "update", PERMISSION_CONTROL, 0, 1, handle_update },
 	{ "urlhandlers", PERMISSION_READ, 0, 0, handle_urlhandlers },
@@ -170,7 +167,7 @@ static const struct command commands[] = {
 static const unsigned num_commands = sizeof(commands) / sizeof(commands[0]);
 
 static bool
-command_available(G_GNUC_UNUSED const struct command *cmd)
+command_available(gcc_unused const struct command *cmd)
 {
 #ifdef ENABLE_SQLITE
 	if (strcmp(cmd->cmd, "sticker") == 0)
@@ -183,7 +180,7 @@ command_available(G_GNUC_UNUSED const struct command *cmd)
 /* don't be fooled, this is the command handler for "commands" command */
 static enum command_return
 handle_commands(Client *client,
-		G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		gcc_unused int argc, gcc_unused char *argv[])
 {
 	const unsigned permission = client_get_permission(client);
 	const struct command *cmd;
@@ -201,7 +198,7 @@ handle_commands(Client *client,
 
 static enum command_return
 handle_not_commands(Client *client,
-		    G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		    gcc_unused int argc, gcc_unused char *argv[])
 {
 	const unsigned permission = client_get_permission(client);
 	const struct command *cmd;
@@ -319,8 +316,7 @@ command_checked_lookup(Client *client, unsigned permission,
 enum command_return
 command_process(Client *client, unsigned num, char *line)
 {
-	GError *error = NULL;
-	int argc;
+	Error error;
 	char *argv[COMMAND_ARGV_MAX] = { NULL };
 	const struct command *cmd;
 	enum command_return ret = COMMAND_RETURN_ERROR;
@@ -329,29 +325,29 @@ command_process(Client *client, unsigned num, char *line)
 
 	/* get the command name (first word on the line) */
 
-	argv[0] = tokenizer_next_word(&line, &error);
+	Tokenizer tokenizer(line);
+	argv[0] = tokenizer.NextWord(error);
 	if (argv[0] == NULL) {
 		current_command = "";
-		if (*line == 0)
+		if (tokenizer.IsEnd())
 			command_error(client, ACK_ERROR_UNKNOWN,
 				      "No command given");
-		else {
+		else
 			command_error(client, ACK_ERROR_UNKNOWN,
-				      "%s", error->message);
-			g_error_free(error);
-		}
+				      "%s", error.GetMessage());
+
 		current_command = NULL;
 
 		return COMMAND_RETURN_ERROR;
 	}
 
-	argc = 1;
+	unsigned argc = 1;
 
 	/* now parse the arguments (quoted or unquoted) */
 
-	while (argc < (int)G_N_ELEMENTS(argv) &&
+	while (argc < COMMAND_ARGV_MAX &&
 	       (argv[argc] =
-		tokenizer_next_param(&line, &error)) != NULL)
+		tokenizer.NextParam(error)) != NULL)
 		++argc;
 
 	/* some error checks; we have to set current_command because
@@ -359,17 +355,15 @@ command_process(Client *client, unsigned num, char *line)
 
 	current_command = argv[0];
 
-	if (argc >= (int)G_N_ELEMENTS(argv)) {
+	if (argc >= COMMAND_ARGV_MAX) {
 		command_error(client, ACK_ERROR_ARG, "Too many arguments");
 		current_command = NULL;
 		return COMMAND_RETURN_ERROR;
 	}
 
-	if (*line != 0) {
-		command_error(client, ACK_ERROR_ARG,
-			      "%s", error->message);
+	if (!tokenizer.IsEnd()) {
+		command_error(client, ACK_ERROR_ARG, "%s", error.GetMessage());
 		current_command = NULL;
-		g_error_free(error);
 		return COMMAND_RETURN_ERROR;
 	}
 

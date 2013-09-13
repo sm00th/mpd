@@ -18,17 +18,18 @@
  */
 
 #include "config.h"
-#include "conf.h"
+#include "ConfigGlobal.hxx"
 #include "fs/Path.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
 #include <assert.h>
 
 static void
-my_log_func(G_GNUC_UNUSED const gchar *log_domain,
+my_log_func(gcc_unused const gchar *log_domain,
 	    GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_level > G_LOG_LEVEL_WARNING)
 		return;
@@ -50,10 +51,9 @@ int main(int argc, char **argv)
 
 	config_global_init();
 
-	GError *error = NULL;
-	if (!ReadConfigFile(config_path, &error)) {
-		g_printerr("%s:", error->message);
-		g_error_free(error);
+	Error error;
+	if (!ReadConfigFile(config_path, error)) {
+		g_printerr("%s:", error.GetMessage());
 		return 1;
 	}
 

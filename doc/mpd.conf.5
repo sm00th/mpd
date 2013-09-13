@@ -3,8 +3,9 @@
 mpd.conf \- Music Player Daemon configuration file
 .SH DESCRIPTION
 \fBmpd.conf\fP is the configuration file for mpd(1).  If not specified on the
-command line, MPD first searches for it at \fB~/.mpdconf\fP then at
-\fB~/.mpd/mpd.conf\fP and then in \fB/etc/mpd.conf\fP.
+command line, MPD first searches for it at \fB$XDG_CONFIG_HOME/mpd/mpd.conf\fP
+then at \fB~/.mpdconf\fP then at \fB~/.mpd/mpd.conf\fP and then in
+\fB/etc/mpd.conf\fP.
 
 Lines beginning with a "#" character are comments.  All other non-empty lines
 specify parameters and their values.  These lines contain the parameter name
@@ -29,28 +30,17 @@ See \fBdocs/mpdconf.example\fP in the source tarball for an example
 configuration file.
 .SH REQUIRED PARAMETERS
 .TP
-.B follow_outside_symlinks <yes or no>
-Control if MPD will follow symbolic links pointing outside the music dir.
-You must recreate the database after changing this option.
-The default is "yes".
-.TP
-.B follow_inside_symlinks <yes or no>
-Control if MPD will follow symbolic links pointing inside the music dir,
-potentially adding duplicates to the database.
-You must recreate the database after changing this option.
-The default is "yes".
-.TP
 .B db_file <file>
 This specifies where the db file will be stored.
-.TP
-.B sticker_file <file>
-The location of the sticker database.  This is a database which
-manages dynamic information attached to songs.
 .TP
 .B log_file <file>
 This specifies where the log file should be located.
 The special value "syslog" makes MPD use the local syslog daemon.
 .SH OPTIONAL PARAMETERS
+.TP
+.B sticker_file <file>
+The location of the sticker database.  This is a database which
+manages dynamic information attached to songs.
 .TP
 .B pid_file <file>
 This specifies the file to save mpd's process ID in.
@@ -87,8 +77,9 @@ You can set a port that is different from the global port setting,
 e.g. "localhost:6602".  IPv6 addresses must be enclosed in square
 brackets if you want to configure a port, e.g. "[::1]:6602".
 
-To bind to a Unix domain socket, specify an absolute path.  For a
-system-wide MPD, we suggest the path "\fB/var/run/mpd/socket\fP".
+To bind to a Unix domain socket, specify an absolute path or a path starting
+with a tilde (~).  For a system-wide MPD, we suggest the path
+"\fB/var/run/mpd/socket\fP".
 .TP
 .B port <port>
 This specifies the port that mpd listens on.  The default is 6600.
@@ -98,6 +89,17 @@ This specifies how verbose logs are.  "default" is minimal logging, "secure"
 reports from what address a connection is opened, and when it is closed, and
 "verbose" records excessive amounts of information for debugging purposes.  The
 default is "default".
+.TP
+.B follow_outside_symlinks <yes or no>
+Control if MPD will follow symbolic links pointing outside the music dir.
+You must recreate the database after changing this option.
+The default is "yes".
+.TP
+.B follow_inside_symlinks <yes or no>
+Control if MPD will follow symbolic links pointing inside the music dir,
+potentially adding duplicates to the database.
+You must recreate the database after changing this option.
+The default is "yes".
 .TP
 .B zeroconf_enabled <yes or no>
 If yes, and MPD has been compiled with support for Avahi or Bonjour, service
@@ -175,7 +177,7 @@ only choice) if MPD was compiled without libsamplerate.
 .RE
 .IP
 For an up-to-date list of available converters, please see the libsamplerate
-documentation (available online at <\fBhttp://www.mega-nerd.com/SRC/\fP>).
+documentation (available online at <\fBhttp://www.mega\-nerd.com/SRC/\fP>).
 .TP
 .B replaygain <off or album or track or auto>
 If specified, mpd will adjust the volume of songs played using ReplayGain tags
@@ -186,7 +188,7 @@ tags if random play is activated otherwise the album ReplayGain tags. Currently
 only FLAC, Ogg Vorbis, Musepack, and MP3 (through ID3v2 ReplayGain tags, not
 APEv2) are supported.
 .TP
-.B replaygain_preamp <-15 to 15>
+.B replaygain_preamp <\-15 to 15>
 This is the gain (in dB) applied to songs with ReplayGain tags.
 .TP
 .B volume_normalization <yes or no>
@@ -227,12 +229,12 @@ is 8192.
 .TP
 .B filesystem_charset <charset>
 This specifies the character set used for the filesystem.  A list of supported
-character sets can be obtained by running "iconv -l".  The default is
+character sets can be obtained by running "iconv \-l".  The default is
 determined from the locale when the db was originally created.
 .TP
 .B id3v1_encoding <charset>
 This specifies the character set which ID3v1 tags are encoded in.  A list of
-supported character sets can be obtained by running "iconv -l".  The default is
+supported character sets can be obtained by running "iconv \-l".  The default is
 to let libid3tag convert them (from ISO-8859-1, as the standard specifies) and
 do no additional conversion.
 .TP
@@ -260,7 +262,7 @@ be used alone to disable all metadata.  The default is to use all known tag
 types except for comments and those starting with "musicbrainz".
 .TP
 .B auto_update <yes or no>
-This specifies the wheter to support automatic update of music database when
+This specifies the whether to support automatic update of music database when
 files are changed in music_directory. The default is to disable autoupdate
 of database.
 .TP
@@ -282,7 +284,7 @@ better but requires more processing and higher bandwidth. Default is yes.
 .TP
 .B type <type>
 This specifies the audio output type.  See the list of supported outputs in mpd
---version for possible values.
+\-\-version for possible values.
 .TP
 .B name <name>
 This specifies a unique name for the audio output.

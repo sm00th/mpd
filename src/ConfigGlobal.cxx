@@ -22,12 +22,10 @@
 #include "ConfigParser.hxx"
 #include "ConfigData.hxx"
 #include "ConfigFile.hxx"
-
-extern "C" {
-#include "utils.h"
-}
-
-#include "mpd_error.h"
+#include "ConfigPath.hxx"
+#include "fs/Path.hxx"
+#include "util/Error.hxx"
+#include "system/FatalError.hxx"
 
 #include <glib.h>
 
@@ -50,9 +48,9 @@ void config_global_init(void)
 }
 
 bool
-ReadConfigFile(const Path &path, GError **error_r)
+ReadConfigFile(const Path &path, Error &error)
 {
-	return ReadConfigFile(config_data, path, error_r);
+	return ReadConfigFile(config_data, path, error);
 }
 
 static void
@@ -94,27 +92,29 @@ config_get_string(ConfigOption option, const char *default_value)
 {
 	const struct config_param *param = config_get_param(option);
 
-	if (param == NULL)
+	if (param == nullptr)
 		return default_value;
 
 	return param->value;
 }
 
-char *
-config_dup_path(ConfigOption option, GError **error_r)
+Path
+config_get_path(ConfigOption option, Error &error)
 {
-	assert(error_r != NULL);
-	assert(*error_r == NULL);
-
 	const struct config_param *param = config_get_param(option);
-	if (param == NULL)
-		return NULL;
+	if (param == nullptr)
+		return Path::Null();
 
-	char *path = parsePath(param->value, error_r);
-	if (G_UNLIKELY(path == NULL))
-		g_prefix_error(error_r,
-			       "Invalid path at line %i: ",
-			       param->line);
+	return config_parse_path(param, error);
+}
+
+Path
+config_parse_path(const struct config_param *param, Error & error)
+{
+	Path path = ParsePath(param->value, error);
+	if (gcc_unlikely(path.IsNull()))
+		error.FormatPrefix("Invalid path at line %i: ",
+				   param->line);
 
 	return path;
 }
@@ -126,13 +126,13 @@ config_get_unsigned(ConfigOption option, unsigned default_value)
 	long value;
 	char *endptr;
 
-	if (param == NULL)
+	if (param == nullptr)
 		return default_value;
 
 	value = strtol(param->value, &endptr, 0);
 	if (*endptr != 0 || value < 0)
-		MPD_ERROR("Not a valid non-negative number in line %i",
-			  param->line);
+		FormatFatalError("Not a valid non-negative number in line %i",
+				 param->line);
 
 	return (unsigned)value;
 }
@@ -144,15 +144,16 @@ config_get_positive(ConfigOption option, unsigned default_value)
 	long value;
 	char *endptr;
 
-	if (param == NULL)
+	if (param == nullptr)
 		return default_value;
 
 	value = strtol(param->value, &endptr, 0);
 	if (*endptr != 0)
-		MPD_ERROR("Not a valid number in line %i", param->line);
+		FormatFatalError("Not a valid number in line %i", param->line);
 
 	if (value <= 0)
-		MPD_ERROR("Not a positive number in line %i", param->line);
+		FormatFatalError("Not a positive number in line %i",
+				 param->line);
 
 	return (unsigned)value;
 }
@@ -163,14 +164,14 @@ config_get_bool(ConfigOption option, bool default_value)
 	const struct config_param *param = config_get_param(option);
 	bool success, value;
 
-	if (param == NULL)
+	if (param == nullptr)
 		return default_value;
 
 	success = get_bool(param->value, &value);
 	if (!success)
-		MPD_ERROR("Expected boolean value (yes, true, 1) or "
-			  "(no, false, 0) on line %i\n",
-			  param->line);
+		FormatFatalError("Expected boolean value (yes, true, 1) or "
+				 "(no, false, 0) on line %i\n",
+				 param->line);
 
 	return value;
 }

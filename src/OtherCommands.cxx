@@ -23,7 +23,7 @@
 #include "CommandError.hxx"
 #include "UpdateGlue.hxx"
 #include "Directory.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "SongPrint.hxx"
 #include "TagPrint.hxx"
 #include "TimePrint.hxx"
@@ -33,9 +33,11 @@
 #include "protocol/Result.hxx"
 #include "ls.hxx"
 #include "Volume.hxx"
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
+#include "fs/Path.hxx"
 
 extern "C" {
-#include "uri.h"
 #include "stats.h"
 }
 
@@ -65,7 +67,7 @@ print_spl_list(Client *client, const PlaylistVector &list)
 
 enum command_return
 handle_urlhandlers(Client *client,
-		   G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		   gcc_unused int argc, gcc_unused char *argv[])
 {
 	if (client_is_local(client))
 		client_puts(client, "handler: file://\n");
@@ -75,7 +77,7 @@ handle_urlhandlers(Client *client,
 
 enum command_return
 handle_decoders(Client *client,
-		G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		gcc_unused int argc, gcc_unused char *argv[])
 {
 	decoder_list_print(client);
 	return COMMAND_RETURN_OK;
@@ -83,22 +85,22 @@ handle_decoders(Client *client,
 
 enum command_return
 handle_tagtypes(Client *client,
-		G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+		gcc_unused int argc, gcc_unused char *argv[])
 {
 	tag_print_types(client);
 	return COMMAND_RETURN_OK;
 }
 
 enum command_return
-handle_kill(G_GNUC_UNUSED Client *client,
-	    G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+handle_kill(gcc_unused Client *client,
+	    gcc_unused int argc, gcc_unused char *argv[])
 {
 	return COMMAND_RETURN_KILL;
 }
 
 enum command_return
-handle_close(G_GNUC_UNUSED Client *client,
-	     G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+handle_close(gcc_unused Client *client,
+	     gcc_unused int argc, gcc_unused char *argv[])
 {
 	return COMMAND_RETURN_CLOSE;
 }
@@ -117,12 +119,19 @@ handle_lsinfo(Client *client, int argc, char *argv[])
 	if (strncmp(uri, "file:///", 8) == 0) {
 		/* print information about an arbitrary local file */
 		const char *path_utf8 = uri + 7;
+		const Path path_fs = Path::FromUTF8(path_utf8);
 
-		GError *error = NULL;
-		if (!client_allow_file(client, path_utf8, &error))
+		if (path_fs.IsNull()) {
+			command_error(client, ACK_ERROR_NO_EXIST,
+				      "unsupported file name");
+			return COMMAND_RETURN_ERROR;
+		}
+
+		Error error;
+		if (!client_allow_file(client, path_fs, error))
 			return print_error(client, error);
 
-		struct song *song = song_file_load(path_utf8, NULL);
+		Song *song = Song::LoadFile(path_utf8, nullptr);
 		if (song == NULL) {
 			command_error(client, ACK_ERROR_NO_EXIST,
 				      "No such file");
@@ -130,7 +139,7 @@ handle_lsinfo(Client *client, int argc, char *argv[])
 		}
 
 		song_print_info(client, song);
-		song_free(song);
+		song->Free();
 		return COMMAND_RETURN_OK;
 	}
 
@@ -139,7 +148,8 @@ handle_lsinfo(Client *client, int argc, char *argv[])
 		return result;
 
 	if (isRootDirectory(uri)) {
-		const auto &list = ListPlaylistFiles(NULL);
+		Error error;
+		const auto &list = ListPlaylistFiles(error);
 		print_spl_list(client, list);
 	}
 
@@ -147,7 +157,7 @@ handle_lsinfo(Client *client, int argc, char *argv[])
 }
 
 enum command_return
-handle_update(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_update(Client *client, gcc_unused int argc, char *argv[])
 {
 	const char *path = NULL;
 	unsigned ret;
@@ -178,7 +188,7 @@ handle_update(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_rescan(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_rescan(Client *client, gcc_unused int argc, char *argv[])
 {
 	const char *path = NULL;
 	unsigned ret;
@@ -206,7 +216,7 @@ handle_rescan(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 }
 
 enum command_return
-handle_setvol(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_setvol(Client *client, gcc_unused int argc, char *argv[])
 {
 	unsigned level;
 	bool success;
@@ -231,21 +241,21 @@ handle_setvol(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 
 enum command_return
 handle_stats(Client *client,
-	     G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+	     gcc_unused int argc, gcc_unused char *argv[])
 {
 	stats_print(client);
 	return COMMAND_RETURN_OK;
 }
 
 enum command_return
-handle_ping(G_GNUC_UNUSED Client *client,
-	    G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+handle_ping(gcc_unused Client *client,
+	    gcc_unused int argc, gcc_unused char *argv[])
 {
 	return COMMAND_RETURN_OK;
 }
 
 enum command_return
-handle_password(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_password(Client *client, gcc_unused int argc, char *argv[])
 {
 	unsigned permission = 0;
 
@@ -261,7 +271,7 @@ handle_password(Client *client, G_GNUC_UNUSED int argc, char *argv[])
 
 enum command_return
 handle_config(Client *client,
-	      G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+	      gcc_unused int argc, gcc_unused char *argv[])
 {
 	if (!client_is_local(client)) {
 		command_error(client, ACK_ERROR_PERMISSION,
@@ -278,7 +288,7 @@ handle_config(Client *client,
 
 enum command_return
 handle_idle(Client *client,
-	    G_GNUC_UNUSED int argc, G_GNUC_UNUSED char *argv[])
+	    gcc_unused int argc, gcc_unused char *argv[])
 {
 	unsigned flags = 0, j;
 	int i;

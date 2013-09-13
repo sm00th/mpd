@@ -22,7 +22,11 @@
 
 #include "check.h"
 
+#ifdef USE_EPOLL
+#include <sys/epoll.h>
+#else
 #include <glib.h>
+#endif
 
 #include <type_traits>
 
@@ -40,31 +44,61 @@
 class EventLoop;
 
 class SocketMonitor {
+#ifdef USE_EPOLL
+#else
 	struct Source {
 		GSource base;
 
 		SocketMonitor *monitor;
 	};
+#endif
 
 	int fd;
 	EventLoop &loop;
+
+#ifdef USE_EPOLL
+	/**
+	 * A bit mask of events that is currently registered in the EventLoop.
+	 */
+	unsigned scheduled_flags;
+#else
 	Source *source;
 	GPollFD poll;
+#endif
 
 public:
+#ifdef USE_EPOLL
+	static constexpr unsigned READ = EPOLLIN;
+	static constexpr unsigned WRITE = EPOLLOUT;
+	static constexpr unsigned ERROR = EPOLLERR;
+	static constexpr unsigned HANGUP = EPOLLHUP;
+#else
 	static constexpr unsigned READ = G_IO_IN;
 	static constexpr unsigned WRITE = G_IO_OUT;
 	static constexpr unsigned ERROR = G_IO_ERR;
 	static constexpr unsigned HANGUP = G_IO_HUP;
+#endif
 
 	typedef std::make_signed<size_t>::type ssize_t;
 
+#ifdef USE_EPOLL
+	SocketMonitor(EventLoop &_loop)
+		:fd(-1), loop(_loop), scheduled_flags(0) {}
+
+	SocketMonitor(int _fd, EventLoop &_loop)
+		:fd(_fd), loop(_loop), scheduled_flags(0) {}
+#else
 	SocketMonitor(EventLoop &_loop)
 		:fd(-1), loop(_loop), source(nullptr) {}
 
 	SocketMonitor(int _fd, EventLoop &_loop);
+#endif
 
 	~SocketMonitor();
+
+	EventLoop &GetEventLoop() {
+		return loop;
+	}
 
 	bool IsDefined() const {
 		return fd >= 0;
@@ -86,35 +120,36 @@ public:
 
 	void Close();
 
-	void Schedule(unsigned flags) {
-		poll.events = flags;
-		poll.revents &= flags;
-		CommitEventFlags();
+	unsigned GetScheduledFlags() const {
+		assert(IsDefined());
+
+#ifdef USE_EPOLL
+		return scheduled_flags;
+#else
+		return poll.events;
+#endif
 	}
 
+	void Schedule(unsigned flags);
+
 	void Cancel() {
-		poll.events = 0;
-		CommitEventFlags();
+		Schedule(0);
 	}
 
 	void ScheduleRead() {
-		poll.events |= READ|HANGUP|ERROR;
-		CommitEventFlags();
+		Schedule(GetScheduledFlags() | READ | HANGUP | ERROR);
 	}
 
 	void ScheduleWrite() {
-		poll.events |= WRITE;
-		CommitEventFlags();
+		Schedule(GetScheduledFlags() | WRITE);
 	}
 
 	void CancelRead() {
-		poll.events &= ~(READ|HANGUP|ERROR);
-		CommitEventFlags();
+		Schedule(GetScheduledFlags() & ~(READ|HANGUP|ERROR));
 	}
 
 	void CancelWrite() {
-		poll.events &= ~WRITE;
-		CommitEventFlags();
+		Schedule(GetScheduledFlags() & ~WRITE);
 	}
 
 	ssize_t Read(void *data, size_t length);
@@ -127,6 +162,9 @@ protected:
 	virtual bool OnSocketReady(unsigned flags) = 0;
 
 public:
+#ifdef USE_EPOLL
+	void Dispatch(unsigned flags);
+#else
 	/* GSource callbacks */
 	static gboolean Prepare(GSource *source, gint *timeout_r);
 	static gboolean Check(GSource *source);
@@ -134,15 +172,18 @@ public:
 				 gpointer user_data);
 
 private:
-	void CommitEventFlags();
-
 	bool Check() const {
+		assert(IsDefined());
+
 		return (poll.revents & poll.events) != 0;
 	}
 
 	void Dispatch() {
+		assert(IsDefined());
+
 		OnSocketReady(poll.revents & poll.events);
 	}
+#endif
 };
 
 #endif

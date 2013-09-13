@@ -21,16 +21,16 @@
 #include "InputInit.hxx"
 #include "InputRegistry.hxx"
 #include "InputPlugin.hxx"
-#include "conf.h"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
+#include "ConfigGlobal.hxx"
+#include "ConfigOption.hxx"
+#include "ConfigData.hxx"
 
 #include <assert.h>
 #include <string.h>
 
-static inline GQuark
-input_quark(void)
-{
-	return g_quark_from_static_string("input");
-}
+extern constexpr Domain input_domain("input");
 
 /**
  * Find the "input" configuration block for the specified plugin.
@@ -39,17 +39,16 @@ input_quark(void)
  * @return the configuration block, or NULL if none was configured
  */
 static const struct config_param *
-input_plugin_config(const char *plugin_name, GError **error_r)
+input_plugin_config(const char *plugin_name, Error &error)
 {
 	const struct config_param *param = NULL;
 
 	while ((param = config_get_next_param(CONF_INPUT, param)) != NULL) {
-		const char *name =
-			config_get_block_string(param, "plugin", NULL);
+		const char *name = param->GetBlockValue("plugin");
 		if (name == NULL) {
-			g_set_error(error_r, input_quark(), 0,
-				    "input configuration without 'plugin' name in line %d",
-				    param->line);
+			error.Format(input_domain,
+				     "input configuration without 'plugin' name in line %d",
+				     param->line);
 			return NULL;
 		}
 
@@ -61,9 +60,9 @@ input_plugin_config(const char *plugin_name, GError **error_r)
 }
 
 bool
-input_stream_global_init(GError **error_r)
+input_stream_global_init(Error &error)
 {
-	GError *error = NULL;
+	const config_param empty;
 
 	for (unsigned i = 0; input_plugins[i] != NULL; ++i) {
 		const struct input_plugin *plugin = input_plugins[i];
@@ -73,22 +72,21 @@ input_stream_global_init(GError **error_r)
 		assert(plugin->open != NULL);
 
 		const struct config_param *param =
-			input_plugin_config(plugin->name, &error);
-		if (param == NULL && error != NULL) {
-			g_propagate_error(error_r, error);
-			return false;
-		}
+			input_plugin_config(plugin->name, error);
+		if (param == nullptr) {
+			if (error.IsDefined())
+				return false;
 
-		if (!config_get_block_bool(param, "enabled", true))
+			param = &empty;
+		} else if (!param->GetBlockValue("enabled", true))
 			/* the plugin is disabled in mpd.conf */
 			continue;
 
-		if (plugin->init == NULL || plugin->init(param, &error))
+		if (plugin->init == NULL || plugin->init(*param, error))
 			input_plugins_enabled[i] = true;
 		else {
-			g_propagate_prefixed_error(error_r, error,
-						   "Failed to initialize input plugin '%s': ",
-						   plugin->name);
+			error.FormatPrefix("Failed to initialize input plugin '%s': ",
+					   plugin->name);
 			return false;
 		}
 	}

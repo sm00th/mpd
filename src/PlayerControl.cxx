@@ -20,7 +20,7 @@
 #include "config.h"
 #include "PlayerControl.hxx"
 #include "Idle.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "DecoderControl.hxx"
 #include "Main.hxx"
 
@@ -30,7 +30,7 @@
 #include <stdio.h>
 
 static void
-pc_enqueue_song_locked(struct player_control *pc, struct song *song);
+pc_enqueue_song_locked(struct player_control *pc, Song *song);
 
 player_control::player_control(unsigned _buffer_chunks,
 			       unsigned _buffered_before_play)
@@ -40,7 +40,6 @@ player_control::player_control(unsigned _buffer_chunks,
 	 command(PLAYER_COMMAND_NONE),
 	 state(PLAYER_STATE_STOP),
 	 error_type(PLAYER_ERROR_NONE),
-	 error(nullptr),
 	 next_song(nullptr),
 	 cross_fade_seconds(0),
 	 mixramp_db(0),
@@ -59,7 +58,7 @@ player_control::player_control(unsigned _buffer_chunks,
 player_control::~player_control()
 {
 	if (next_song != nullptr)
-		song_free(next_song);
+		next_song->Free();
 }
 
 static void
@@ -88,7 +87,7 @@ player_command(struct player_control *pc, enum player_command cmd)
 }
 
 void
-player_control::Play(struct song *song)
+player_control::Play(Song *song)
 {
 	assert(song != NULL);
 
@@ -104,8 +103,6 @@ player_control::Play(struct song *song)
 	assert(next_song == nullptr);
 
 	Unlock();
-
-	idle_add(IDLE_PLAYER);
 }
 
 void
@@ -218,16 +215,13 @@ player_control::GetStatus()
 }
 
 void
-player_control::SetError(player_error type, GError *_error)
+player_control::SetError(player_error type, Error &&_error)
 {
 	assert(type != PLAYER_ERROR_NONE);
-	assert(_error != NULL);
-
-	if (error_type != PLAYER_ERROR_NONE)
-	    g_error_free(error);
+	assert(_error.IsDefined());
 
 	error_type = type;
-	error = _error;
+	error = std::move(_error);
 }
 
 void
@@ -237,7 +231,7 @@ player_control::ClearError()
 
 	if (error_type != PLAYER_ERROR_NONE) {
 	    error_type = PLAYER_ERROR_NONE;
-	    g_error_free(error);
+	    error.Clear();
 	}
 
 	Unlock();
@@ -248,14 +242,14 @@ player_control::GetErrorMessage() const
 {
 	Lock();
 	char *message = error_type != PLAYER_ERROR_NONE
-		? g_strdup(error->message)
+		? g_strdup(error.GetMessage())
 		: NULL;
 	Unlock();
 	return message;
 }
 
 static void
-pc_enqueue_song_locked(struct player_control *pc, struct song *song)
+pc_enqueue_song_locked(struct player_control *pc, Song *song)
 {
 	assert(song != NULL);
 	assert(pc->next_song == NULL);
@@ -265,7 +259,7 @@ pc_enqueue_song_locked(struct player_control *pc, struct song *song)
 }
 
 void
-player_control::EnqueueSong(struct song *song)
+player_control::EnqueueSong(Song *song)
 {
 	assert(song != NULL);
 
@@ -275,14 +269,14 @@ player_control::EnqueueSong(struct song *song)
 }
 
 bool
-player_control::Seek(struct song *song, float seek_time)
+player_control::Seek(Song *song, float seek_time)
 {
 	assert(song != NULL);
 
 	Lock();
 
 	if (next_song != nullptr)
-		song_free(next_song);
+		next_song->Free();
 
 	next_song = song;
 	seek_where = seek_time;

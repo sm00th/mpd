@@ -18,7 +18,7 @@
  */
 
 #include "config.h"
-#include "decoder_api.h"
+#include "DecoderAPI.hxx"
 #include "AudioConfig.hxx"
 #include "replay_gain_config.h"
 #include "MusicChunk.hxx"
@@ -26,20 +26,22 @@
 #include "MusicPipe.hxx"
 #include "DecoderControl.hxx"
 #include "DecoderInternal.hxx"
-#include "song.h"
+#include "Song.hxx"
 #include "InputStream.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "decoder"
 
 void
 decoder_initialized(struct decoder *decoder,
-		    const struct audio_format *audio_format,
+		    const AudioFormat audio_format,
 		    bool seekable, float total_time)
 {
 	struct decoder_control *dc = decoder->dc;
@@ -51,12 +53,11 @@ decoder_initialized(struct decoder *decoder,
 	assert(decoder->stream_tag == NULL);
 	assert(decoder->decoder_tag == NULL);
 	assert(!decoder->seeking);
-	assert(audio_format != NULL);
-	assert(audio_format_defined(audio_format));
-	assert(audio_format_valid(audio_format));
+	assert(audio_format.IsDefined());
+	assert(audio_format.IsValid());
 
-	dc->in_audio_format = *audio_format;
-	getOutputAudioFormat(audio_format, &dc->out_audio_format);
+	dc->in_audio_format = audio_format;
+	dc->out_audio_format = getOutputAudioFormat(audio_format);
 
 	dc->seekable = seekable;
 	dc->total_time = total_time;
@@ -67,13 +68,12 @@ decoder_initialized(struct decoder *decoder,
 	dc->Unlock();
 
 	g_debug("audio_format=%s, seekable=%s",
-		audio_format_to_string(&dc->in_audio_format, &af_string),
+		audio_format_to_string(dc->in_audio_format, &af_string),
 		seekable ? "true" : "false");
 
-	if (!audio_format_equals(&dc->in_audio_format,
-				 &dc->out_audio_format))
+	if (dc->in_audio_format != dc->out_audio_format)
 		g_debug("converting to %s",
-			audio_format_to_string(&dc->out_audio_format,
+			audio_format_to_string(dc->out_audio_format,
 					       &af_string));
 }
 
@@ -81,7 +81,7 @@ decoder_initialized(struct decoder *decoder,
  * Checks if we need an "initial seek".  If so, then the initial seek
  * is prepared, and the function returns true.
  */
-G_GNUC_PURE
+gcc_pure
 static bool
 decoder_prepare_initial_seek(struct decoder *decoder)
 {
@@ -128,7 +128,7 @@ decoder_prepare_initial_seek(struct decoder *decoder)
  * synthesized command, e.g. to seek to the beginning of the CUE
  * track.
  */
-G_GNUC_PURE
+gcc_pure
 static enum decoder_command
 decoder_get_virtual_command(struct decoder *decoder)
 {
@@ -192,7 +192,7 @@ decoder_command_finished(struct decoder *decoder)
 	dc->Unlock();
 }
 
-double decoder_seek_where(G_GNUC_UNUSED struct decoder * decoder)
+double decoder_seek_where(gcc_unused struct decoder * decoder)
 {
 	const struct decoder_control *dc = decoder->dc;
 
@@ -233,7 +233,7 @@ void decoder_seek_error(struct decoder * decoder)
  * Should be read operation be cancelled?  That is the case when the
  * player thread has sent a command such as "STOP".
  */
-G_GNUC_PURE
+gcc_pure
 static inline bool
 decoder_check_cancel_read(const struct decoder *decoder)
 {
@@ -258,8 +258,6 @@ size_t decoder_read(struct decoder *decoder,
 		    void *buffer, size_t length)
 {
 	/* XXX don't allow decoder==NULL */
-	GError *error = NULL;
-	size_t nbytes;
 
 	assert(decoder == NULL ||
 	       decoder->dc->state == DECODE_STATE_START ||
@@ -270,30 +268,29 @@ size_t decoder_read(struct decoder *decoder,
 	if (length == 0)
 		return 0;
 
-	input_stream_lock(is);
+	is->Lock();
 
 	while (true) {
 		if (decoder_check_cancel_read(decoder)) {
-			input_stream_unlock(is);
+			is->Unlock();
 			return 0;
 		}
 
-		if (input_stream_available(is))
+		if (is->IsAvailable())
 			break;
 
 		is->cond.wait(is->mutex);
 	}
 
-	nbytes = input_stream_read(is, buffer, length, &error);
-	assert(nbytes == 0 || error == NULL);
-	assert(nbytes > 0 || error != NULL || input_stream_eof(is));
+	Error error;
+	size_t nbytes = is->Read(buffer, length, error);
+	assert(nbytes == 0 || !error.IsDefined());
+	assert(nbytes > 0 || error.IsDefined() || is->IsEOF());
 
-	if (G_UNLIKELY(nbytes == 0 && error != NULL)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-	}
+	if (gcc_unlikely(nbytes == 0 && error.IsDefined()))
+		g_warning("%s", error.GetMessage());
 
-	input_stream_unlock(is);
+	is->Unlock();
 
 	return nbytes;
 }
@@ -312,7 +309,7 @@ decoder_timestamp(struct decoder *decoder, double t)
  * (decoder.chunk) if there is one.
  */
 static enum decoder_command
-do_send_tag(struct decoder *decoder, const struct tag *tag)
+do_send_tag(struct decoder *decoder, const Tag &tag)
 {
 	struct music_chunk *chunk;
 
@@ -331,17 +328,17 @@ do_send_tag(struct decoder *decoder, const struct tag *tag)
 		return decoder->dc->command;
 	}
 
-	chunk->tag = tag_dup(tag);
+	chunk->tag = new Tag(tag);
 	return DECODE_COMMAND_NONE;
 }
 
 static bool
 update_stream_tag(struct decoder *decoder, struct input_stream *is)
 {
-	struct tag *tag;
+	Tag *tag;
 
 	tag = is != NULL
-		? input_stream_lock_tag(is)
+		? is->LockReadTag()
 		: NULL;
 	if (tag == NULL) {
 		tag = decoder->song_tag;
@@ -353,9 +350,7 @@ update_stream_tag(struct decoder *decoder, struct input_stream *is)
 		decoder->song_tag = NULL;
 	}
 
-	if (decoder->stream_tag != NULL)
-		tag_free(decoder->stream_tag);
-
+	delete decoder->stream_tag;
 	decoder->stream_tag = tag;
 	return true;
 }
@@ -367,12 +362,11 @@ decoder_data(struct decoder *decoder,
 	     uint16_t kbit_rate)
 {
 	struct decoder_control *dc = decoder->dc;
-	GError *error = NULL;
 	enum decoder_command cmd;
 
 	assert(dc->state == DECODE_STATE_DECODE);
 	assert(dc->pipe != NULL);
-	assert(length % audio_format_frame_size(&dc->in_audio_format) == 0);
+	assert(length % dc->in_audio_format.GetFrameSize() == 0);
 
 	dc->Lock();
 	cmd = decoder_get_virtual_command(decoder);
@@ -387,31 +381,30 @@ decoder_data(struct decoder *decoder,
 	if (update_stream_tag(decoder, is)) {
 		if (decoder->decoder_tag != NULL) {
 			/* merge with tag from decoder plugin */
-			struct tag *tag;
-
-			tag = tag_merge(decoder->decoder_tag,
-					decoder->stream_tag);
-			cmd = do_send_tag(decoder, tag);
-			tag_free(tag);
+			Tag *tag = Tag::Merge(*decoder->decoder_tag,
+					      *decoder->stream_tag);
+			cmd = do_send_tag(decoder, *tag);
+			delete tag;
 		} else
 			/* send only the stream tag */
-			cmd = do_send_tag(decoder, decoder->stream_tag);
+			cmd = do_send_tag(decoder, *decoder->stream_tag);
 
 		if (cmd != DECODE_COMMAND_NONE)
 			return cmd;
 	}
 
-	if (!audio_format_equals(&dc->in_audio_format, &dc->out_audio_format)) {
-		data = decoder->conv_state.Convert(&dc->in_audio_format,
+	if (dc->in_audio_format != dc->out_audio_format) {
+		Error error;
+		data = decoder->conv_state.Convert(dc->in_audio_format,
 						   data, length,
-						   &dc->out_audio_format,
+						   dc->out_audio_format,
 						   &length,
-						   &error);
+						   error);
 		if (data == NULL) {
 			/* the PCM conversion has failed - stop
 			   playback, since we have no better way to
 			   bail out */
-			g_warning("%s", error->message);
+			g_warning("%s", error.GetMessage());
 			return DECODE_COMMAND_STOP;
 		}
 	}
@@ -460,7 +453,7 @@ decoder_data(struct decoder *decoder,
 		length -= nbytes;
 
 		decoder->timestamp += (double)nbytes /
-			audio_format_time_to_size(&dc->out_audio_format);
+			dc->out_audio_format.GetTimeToSize();
 
 		if (dc->end_ms > 0 &&
 		    decoder->timestamp >= dc->end_ms / 1000.0)
@@ -473,21 +466,19 @@ decoder_data(struct decoder *decoder,
 }
 
 enum decoder_command
-decoder_tag(G_GNUC_UNUSED struct decoder *decoder, struct input_stream *is,
-	    const struct tag *tag)
+decoder_tag(gcc_unused struct decoder *decoder, struct input_stream *is,
+	    Tag &&tag)
 {
-	G_GNUC_UNUSED const struct decoder_control *dc = decoder->dc;
+	gcc_unused const struct decoder_control *dc = decoder->dc;
 	enum decoder_command cmd;
 
 	assert(dc->state == DECODE_STATE_DECODE);
 	assert(dc->pipe != NULL);
-	assert(tag != NULL);
 
 	/* save the tag */
 
-	if (decoder->decoder_tag != NULL)
-		tag_free(decoder->decoder_tag);
-	decoder->decoder_tag = tag_dup(tag);
+	delete decoder->decoder_tag;
+	decoder->decoder_tag = new Tag(tag);
 
 	/* check for a new stream tag */
 
@@ -505,14 +496,15 @@ decoder_tag(G_GNUC_UNUSED struct decoder *decoder, struct input_stream *is,
 
 	if (decoder->stream_tag != NULL) {
 		/* merge with tag from input stream */
-		struct tag *merged;
+		Tag *merged;
 
-		merged = tag_merge(decoder->stream_tag, decoder->decoder_tag);
-		cmd = do_send_tag(decoder, merged);
-		tag_free(merged);
+		merged = Tag::Merge(*decoder->stream_tag,
+				    *decoder->decoder_tag);
+		cmd = do_send_tag(decoder, *merged);
+		delete merged;
 	} else
 		/* send only the decoder tag */
-		cmd = do_send_tag(decoder, tag);
+		cmd = do_send_tag(decoder, *decoder->decoder_tag);
 
 	return cmd;
 }

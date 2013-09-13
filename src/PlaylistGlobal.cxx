@@ -26,19 +26,19 @@
 #include "PlaylistGlobal.hxx"
 #include "Playlist.hxx"
 #include "Main.hxx"
-#include "Partition.hxx"
+#include "Instance.hxx"
 #include "GlobalEvents.hxx"
 
 static void
 playlist_tag_event(void)
 {
-	global_partition->playlist.TagChanged();
+	instance->TagModified();
 }
 
 static void
 playlist_event(void)
 {
-	global_partition->playlist.SyncWithPlayer(global_partition->pc);
+	instance->SyncWithPlayer();
 }
 
 void

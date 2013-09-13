@@ -20,15 +20,14 @@
 #include "config.h"
 #include "IOThread.hxx"
 #include "DecoderList.hxx"
-#include "decoder_api.h"
+#include "DecoderAPI.hxx"
 #include "InputInit.hxx"
 #include "InputStream.hxx"
-#include "audio_format.h"
-extern "C" {
-#include "tag_ape.h"
-#include "tag_id3.h"
-}
-#include "tag_handler.h"
+#include "AudioFormat.hxx"
+#include "tag/TagHandler.hxx"
+#include "tag/TagId3.hxx"
+#include "tag/ApeTag.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
@@ -41,72 +40,73 @@ extern "C" {
 #endif
 
 void
-decoder_initialized(G_GNUC_UNUSED struct decoder *decoder,
-		    G_GNUC_UNUSED const struct audio_format *audio_format,
-		    G_GNUC_UNUSED bool seekable,
-		    G_GNUC_UNUSED float total_time)
+decoder_initialized(gcc_unused struct decoder *decoder,
+		    gcc_unused const AudioFormat audio_format,
+		    gcc_unused bool seekable,
+		    gcc_unused float total_time)
 {
 }
 
 enum decoder_command
-decoder_get_command(G_GNUC_UNUSED struct decoder *decoder)
+decoder_get_command(gcc_unused struct decoder *decoder)
 {
 	return DECODE_COMMAND_NONE;
 }
 
-void decoder_command_finished(G_GNUC_UNUSED struct decoder *decoder)
+void decoder_command_finished(gcc_unused struct decoder *decoder)
 {
 }
 
-double decoder_seek_where(G_GNUC_UNUSED struct decoder *decoder)
+double decoder_seek_where(gcc_unused struct decoder *decoder)
 {
 	return 1.0;
 }
 
-void decoder_seek_error(G_GNUC_UNUSED struct decoder *decoder)
+void decoder_seek_error(gcc_unused struct decoder *decoder)
 {
 }
 
 size_t
-decoder_read(G_GNUC_UNUSED struct decoder *decoder,
+decoder_read(gcc_unused struct decoder *decoder,
 	     struct input_stream *is,
 	     void *buffer, size_t length)
 {
-	return input_stream_lock_read(is, buffer, length, NULL);
+	Error error;
+	return is->LockRead(buffer, length, error);
 }
 
 void
-decoder_timestamp(G_GNUC_UNUSED struct decoder *decoder,
-		  G_GNUC_UNUSED double t)
+decoder_timestamp(gcc_unused struct decoder *decoder,
+		  gcc_unused double t)
 {
 }
 
 enum decoder_command
-decoder_data(G_GNUC_UNUSED struct decoder *decoder,
-	     G_GNUC_UNUSED struct input_stream *is,
+decoder_data(gcc_unused struct decoder *decoder,
+	     gcc_unused struct input_stream *is,
 	     const void *data, size_t datalen,
-	     G_GNUC_UNUSED uint16_t bit_rate)
+	     gcc_unused uint16_t bit_rate)
 {
-	G_GNUC_UNUSED ssize_t nbytes = write(1, data, datalen);
+	gcc_unused ssize_t nbytes = write(1, data, datalen);
 	return DECODE_COMMAND_NONE;
 }
 
 enum decoder_command
-decoder_tag(G_GNUC_UNUSED struct decoder *decoder,
-	    G_GNUC_UNUSED struct input_stream *is,
-	    G_GNUC_UNUSED const struct tag *tag)
+decoder_tag(gcc_unused struct decoder *decoder,
+	    gcc_unused struct input_stream *is,
+	    gcc_unused Tag &&tag)
 {
 	return DECODE_COMMAND_NONE;
 }
 
 void
-decoder_replay_gain(G_GNUC_UNUSED struct decoder *decoder,
-		    G_GNUC_UNUSED const struct replay_gain_info *replay_gain_info)
+decoder_replay_gain(gcc_unused struct decoder *decoder,
+		    gcc_unused const struct replay_gain_info *replay_gain_info)
 {
 }
 
 void
-decoder_mixramp(G_GNUC_UNUSED struct decoder *decoder,
+decoder_mixramp(gcc_unused struct decoder *decoder,
 		char *mixramp_start, char *mixramp_end)
 {
 	g_free(mixramp_start);
@@ -116,20 +116,20 @@ decoder_mixramp(G_GNUC_UNUSED struct decoder *decoder,
 static bool empty = true;
 
 static void
-print_duration(unsigned seconds, G_GNUC_UNUSED void *ctx)
+print_duration(unsigned seconds, gcc_unused void *ctx)
 {
 	g_print("duration=%d\n", seconds);
 }
 
 static void
-print_tag(enum tag_type type, const char *value, G_GNUC_UNUSED void *ctx)
+print_tag(enum tag_type type, const char *value, gcc_unused void *ctx)
 {
 	g_print("[%s]=%s\n", tag_item_names[type], value);
 	empty = false;
 }
 
 static void
-print_pair(const char *name, const char *value, G_GNUC_UNUSED void *ctx)
+print_pair(const char *name, const char *value, gcc_unused void *ctx)
 {
 	g_print("\"%s\"=%s\n", name, value);
 }
@@ -142,7 +142,6 @@ static const struct tag_handler print_handler = {
 
 int main(int argc, char **argv)
 {
-	GError *error = NULL;
 	const char *decoder_name, *path;
 	const struct decoder_plugin *plugin;
 
@@ -159,17 +158,16 @@ int main(int argc, char **argv)
 	decoder_name = argv[1];
 	path = argv[2];
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
-	io_thread_init();
-	if (!io_thread_start(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		return EXIT_FAILURE;
-	}
+#endif
 
-	if (!input_stream_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	io_thread_init();
+	io_thread_start();
+
+	Error error;
+	if (!input_stream_global_init(error)) {
+		g_warning("%s", error.GetMessage());
 		return 2;
 	}
 
@@ -187,30 +185,23 @@ int main(int argc, char **argv)
 		Mutex mutex;
 		Cond cond;
 
-		struct input_stream *is =
-			input_stream_open(path, mutex, cond, &error);
-
+		input_stream *is = input_stream::Open(path, mutex, cond,
+						      error);
 		if (is == NULL) {
 			g_printerr("Failed to open %s: %s\n",
-				   path, error->message);
-			g_error_free(error);
+				   path, error.GetMessage());
 			return 1;
 		}
 
 		mutex.lock();
 
-		while (!is->ready) {
-			cond.wait(mutex);
-			input_stream_update(is);
-		}
+		is->WaitReady();
 
-		if (!input_stream_check(is, &error)) {
+		if (!is->Check(error)) {
 			mutex.unlock();
 
 			g_printerr("Failed to read %s: %s\n",
-				   path, error->message);
-			g_error_free(error);
-
+				   path, error.GetMessage());
 			return EXIT_FAILURE;
 		}
 
@@ -218,7 +209,7 @@ int main(int argc, char **argv)
 
 		success = decoder_plugin_scan_stream(plugin, is,
 						     &print_handler, NULL);
-		input_stream_close(is);
+		is->Close();
 	}
 
 	decoder_plugin_deinit_all();

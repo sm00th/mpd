@@ -33,12 +33,18 @@
 #include "gcc.h"
 
 #include <new>
+#include <utility>
 
 #if !defined(__clang__) && __GNUC__ && !GCC_CHECK_VERSION(4,8)
 #include <type_traits>
 #endif
 
 #include <assert.h>
+
+#if defined(__clang__) || GCC_CHECK_VERSION(4,7)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#endif
 
 /**
  * Container for an object that gets constructed and destructed
@@ -107,5 +113,9 @@ public:
 		return (T *)data;
 	}
 };
+
+#if defined(__clang__) || GCC_VERSION >= 40700
+#pragma GCC diagnostic pop
+#endif
 
 #endif

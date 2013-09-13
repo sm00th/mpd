@@ -25,8 +25,9 @@
 #include "DatabaseSelection.hxx"
 #include "CommandError.hxx"
 #include "ClientInternal.hxx"
-#include "tag.h"
-#include "uri.h"
+#include "tag/Tag.hxx"
+#include "util/UriUtil.hxx"
+#include "util/Error.hxx"
 #include "SongFilter.hxx"
 #include "protocol/Result.hxx"
 
@@ -46,8 +47,8 @@ handle_lsinfo2(Client *client, int argc, char *argv[])
 
 	const DatabaseSelection selection(uri, false);
 
-	GError *error = NULL;
-	if (!db_selection_print(client, selection, true, &error))
+	Error error;
+	if (!db_selection_print(client, selection, true, error))
 		return print_error(client, error);
 
 	return COMMAND_RETURN_OK;
@@ -64,8 +65,8 @@ handle_match(Client *client, int argc, char *argv[], bool fold_case)
 
 	const DatabaseSelection selection("", true, &filter);
 
-	GError *error = NULL;
-	return db_selection_print(client, selection, true, &error)
+	Error error;
+	return db_selection_print(client, selection, true, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
@@ -92,8 +93,8 @@ handle_match_add(Client *client, int argc, char *argv[], bool fold_case)
 	}
 
 	const DatabaseSelection selection("", true, &filter);
-	GError *error = NULL;
-	return AddFromDatabase(client->partition, selection, &error)
+	Error error;
+	return AddFromDatabase(client->partition, selection, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
@@ -121,8 +122,8 @@ handle_searchaddpl(Client *client, int argc, char *argv[])
 		return COMMAND_RETURN_ERROR;
 	}
 
-	GError *error = NULL;
-	return search_add_to_playlist("", playlist, &filter, &error)
+	Error error;
+	return search_add_to_playlist("", playlist, &filter, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
@@ -136,22 +137,22 @@ handle_count(Client *client, int argc, char *argv[])
 		return COMMAND_RETURN_ERROR;
 	}
 
-	GError *error = NULL;
-	return  searchStatsForSongsIn(client, "", &filter, &error)
+	Error error;
+	return  searchStatsForSongsIn(client, "", &filter, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
 
 enum command_return
-handle_listall(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_listall(Client *client, gcc_unused int argc, char *argv[])
 {
 	const char *directory = "";
 
 	if (argc == 2)
 		directory = argv[1];
 
-	GError *error = NULL;
-	return printAllIn(client, directory, &error)
+	Error error;
+	return printAllIn(client, directory, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }
@@ -194,9 +195,9 @@ handle_list(Client *client, int argc, char *argv[])
 	} else
 		filter = nullptr;
 
-	GError *error = NULL;
+	Error error;
 	enum command_return ret =
-		listAllUniqueTags(client, tagType, filter, &error)
+		listAllUniqueTags(client, tagType, filter, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 
@@ -206,15 +207,15 @@ handle_list(Client *client, int argc, char *argv[])
 }
 
 enum command_return
-handle_listallinfo(Client *client, G_GNUC_UNUSED int argc, char *argv[])
+handle_listallinfo(Client *client, gcc_unused int argc, char *argv[])
 {
 	const char *directory = "";
 
 	if (argc == 2)
 		directory = argv[1];
 
-	GError *error = NULL;
-	return printInfoForAllIn(client, directory, &error)
+	Error error;
+	return printInfoForAllIn(client, directory, error)
 		? COMMAND_RETURN_OK
 		: print_error(client, error);
 }

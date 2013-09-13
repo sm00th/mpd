@@ -27,14 +27,11 @@
 #include "config.h"
 #include "OutputCommand.hxx"
 #include "OutputAll.hxx"
+#include "OutputInternal.hxx"
+#include "OutputPlugin.hxx"
 #include "PlayerControl.hxx"
+#include "MixerControl.hxx"
 #include "Idle.hxx"
-
-extern "C" {
-#include "output_internal.h"
-#include "output_plugin.h"
-#include "mixer_control.h"
-}
 
 extern unsigned audio_output_state_version;
 
@@ -64,7 +61,6 @@ bool
 audio_output_disable_index(unsigned idx)
 {
 	struct audio_output *ao;
-	struct mixer *mixer;
 
 	if (idx >= audio_output_count())
 		return false;
@@ -76,10 +72,37 @@ audio_output_disable_index(unsigned idx)
 	ao->enabled = false;
 	idle_add(IDLE_OUTPUT);
 
-	mixer = ao->mixer;
+	Mixer *mixer = ao->mixer;
 	if (mixer != NULL) {
 		mixer_close(mixer);
 		idle_add(IDLE_MIXER);
+	}
+
+	ao->player_control->UpdateAudio();
+
+	++audio_output_state_version;
+
+	return true;
+}
+
+bool
+audio_output_toggle_index(unsigned idx)
+{
+	struct audio_output *ao;
+
+	if (idx >= audio_output_count())
+		return false;
+
+	ao = audio_output_get(idx);
+	const bool enabled = ao->enabled = !ao->enabled;
+	idle_add(IDLE_OUTPUT);
+
+	if (!enabled) {
+		Mixer *mixer = ao->mixer;
+		if (mixer != nullptr) {
+			mixer_close(mixer);
+			idle_add(IDLE_MIXER);
+		}
 	}
 
 	ao->player_control->UpdateAudio();

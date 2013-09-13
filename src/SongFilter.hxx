@@ -29,9 +29,9 @@
 #define LOCATE_TAG_FILE_TYPE	TAG_NUM_OF_ITEM_TYPES+10
 #define LOCATE_TAG_ANY_TYPE     TAG_NUM_OF_ITEM_TYPES+20
 
-struct tag;
-struct tag_item;
-struct song;
+struct Tag;
+struct TagItem;
+struct Song;
 
 class SongFilter {
 	class Item {
@@ -65,13 +65,13 @@ class SongFilter {
 		bool StringMatch(const char *s) const;
 
 		gcc_pure
-		bool Match(const tag_item &tag_item) const;
+		bool Match(const TagItem &tag_item) const;
 
 		gcc_pure
-		bool Match(const struct tag &tag) const;
+		bool Match(const Tag &tag) const;
 
 		gcc_pure
-		bool Match(const song &song) const;
+		bool Match(const Song &song) const;
 	};
 
 	std::list<Item> items;
@@ -91,10 +91,10 @@ public:
 	bool Parse(unsigned argc, char *argv[], bool fold_case=false);
 
 	gcc_pure
-	bool Match(const tag &tag) const;
+	bool Match(const Tag &tag) const;
 
 	gcc_pure
-	bool Match(const song &song) const;
+	bool Match(const Song &song) const;
 };
 
 /**

@@ -22,15 +22,16 @@
 #include "FilterPlugin.hxx"
 #include "FilterInternal.hxx"
 #include "FilterRegistry.hxx"
-#include "audio_format.h"
+#include "AudioFormat.hxx"
 #include "replay_gain_info.h"
 #include "replay_gain_config.h"
-#include "mixer_control.h"
-#include "PcmVolume.hxx"
+#include "MixerControl.hxx"
+#include "pcm/PcmVolume.hxx"
+#include "pcm/PcmBuffer.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
-extern "C" {
-#include "pcm_buffer.h"
-}
+#include <glib.h>
 
 #include <assert.h>
 #include <string.h>
@@ -43,7 +44,7 @@ class ReplayGainFilter final : public Filter {
 	 * If set, then this hardware mixer is used for applying
 	 * replay gain, instead of the software volume library.
 	 */
-	struct mixer *mixer;
+	Mixer *mixer;
 
 	/**
 	 * The base volume level for scale=1.0, between 1 and 100
@@ -69,9 +70,9 @@ class ReplayGainFilter final : public Filter {
 	 */
 	unsigned volume;
 
-	struct audio_format format;
+	AudioFormat format;
 
-	struct pcm_buffer buffer;
+	PcmBuffer buffer;
 
 public:
 	ReplayGainFilter()
@@ -80,7 +81,7 @@ public:
 		replay_gain_info_init(&info);
 	}
 
-	void SetMixer(struct mixer *_mixer, unsigned _base) {
+	void SetMixer(Mixer *_mixer, unsigned _base) {
 		assert(_mixer == NULL || (_base > 0 && _base <= 100));
 
 		mixer = _mixer;
@@ -115,17 +116,13 @@ public:
 	 */
 	void Update();
 
-	virtual const audio_format *Open(audio_format &af, GError **error_r);
+	virtual AudioFormat Open(AudioFormat &af, Error &error) override;
 	virtual void Close();
 	virtual const void *FilterPCM(const void *src, size_t src_size,
-				      size_t *dest_size_r, GError **error_r);
+				      size_t *dest_size_r, Error &error);
 };
 
-static inline GQuark
-replay_gain_quark(void)
-{
-	return g_quark_from_static_string("replay_gain");
-}
+static constexpr Domain replay_gain_domain("replay_gain");
 
 void
 ReplayGainFilter::Update()
@@ -146,40 +143,37 @@ ReplayGainFilter::Update()
 		if (_volume > 100)
 			_volume = 100;
 
-		GError *error = NULL;
-		if (!mixer_set_volume(mixer, _volume, &error)) {
+		Error error;
+		if (!mixer_set_volume(mixer, _volume, error))
 			g_warning("Failed to update hardware mixer: %s",
-				  error->message);
-			g_error_free(error);
-		}
+				  error.GetMessage());
 	}
 }
 
 static Filter *
-replay_gain_filter_init(gcc_unused const struct config_param *param,
-			gcc_unused GError **error_r)
+replay_gain_filter_init(gcc_unused const config_param &param,
+			gcc_unused Error &error)
 {
 	return new ReplayGainFilter();
 }
 
-const audio_format *
-ReplayGainFilter::Open(audio_format &af, gcc_unused GError **error_r)
+AudioFormat
+ReplayGainFilter::Open(AudioFormat &af, gcc_unused Error &error)
 {
 	format = af;
-	pcm_buffer_init(&buffer);
 
-	return &format;
+	return format;
 }
 
 void
 ReplayGainFilter::Close()
 {
-	pcm_buffer_deinit(&buffer);
+	buffer.Clear();
 }
 
 const void *
 ReplayGainFilter::FilterPCM(const void *src, size_t src_size,
-			    size_t *dest_size_r, GError **error_r)
+			    size_t *dest_size_r, Error &error)
 {
 
 	*dest_size_r = src_size;
@@ -188,7 +182,7 @@ ReplayGainFilter::FilterPCM(const void *src, size_t src_size,
 		/* optimized special case: 100% volume = no-op */
 		return src;
 
-	void *dest = pcm_buffer_get(&buffer, src_size);
+	void *dest = buffer.Get(src_size);
 	if (volume <= 0) {
 		/* optimized special case: 0% volume = memset(0) */
 		/* XXX is this valid for all sample formats? What
@@ -200,11 +194,10 @@ ReplayGainFilter::FilterPCM(const void *src, size_t src_size,
 	memcpy(dest, src, src_size);
 
 	bool success = pcm_volume(dest, src_size,
-				  sample_format(format.format),
+				  format.format,
 				  volume);
 	if (!success) {
-		g_set_error(error_r, replay_gain_quark(), 0,
-			    "pcm_volume() has failed");
+		error.Set(replay_gain_domain, "pcm_volume() has failed");
 		return NULL;
 	}
 
@@ -217,7 +210,7 @@ const struct filter_plugin replay_gain_filter_plugin = {
 };
 
 void
-replay_gain_filter_set_mixer(Filter *_filter, struct mixer *mixer,
+replay_gain_filter_set_mixer(Filter *_filter, Mixer *mixer,
 			     unsigned base)
 {
 	ReplayGainFilter *filter = (ReplayGainFilter *)_filter;

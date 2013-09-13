@@ -19,11 +19,7 @@
 
 #include "config.h"
 #include "ls.hxx"
-
-extern "C" {
-#include "uri.h"
-}
-
+#include "util/UriUtil.hxx"
 #include "Client.hxx"
 
 #include <glib.h>
@@ -38,8 +34,9 @@ extern "C" {
   * connected by IPC socket.
   */
 static const char *remoteUrlPrefixes[] = {
-#if defined(ENABLE_CURL) || defined(ENABLE_SOUP)
+#if defined(ENABLE_CURL)
 	"http://",
+	"https://",
 #endif
 #ifdef ENABLE_MMS
 	"mms://",

@@ -92,7 +92,7 @@ class HttpdClient final : public BufferedSocket {
 	/**
 	 * The amount of streaming data between each metadata block
 	 */
-	guint metaint;
+	unsigned metaint;
 
 	/**
 	 * The metadata as #Page which is currently being sent to the client.
@@ -108,7 +108,7 @@ class HttpdClient final : public BufferedSocket {
 	 * The amount of streaming data sent to the client
 	 * since the last icy information was sent.
 	 */
-	guint metadata_fill;
+	unsigned metadata_fill;
 
 public:
 	/**
@@ -179,7 +179,7 @@ protected:
 	virtual bool OnSocketReady(unsigned flags) override;
 	virtual InputResult OnSocketInput(const void *data,
 					  size_t length) override;
-	virtual void OnSocketError(GError *error) override;
+	virtual void OnSocketError(Error &&error) override;
 	virtual void OnSocketClosed() override;
 };
 

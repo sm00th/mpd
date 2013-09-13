@@ -34,14 +34,32 @@
 #undef G_LOG_DOMAIN
 #define G_LOG_DOMAIN "state_file"
 
-StateFile::StateFile(Path &&_path, const char *_path_utf8,
-                     Partition &_partition, EventLoop &_loop)
-	:TimeoutMonitor(_loop), path(std::move(_path)), path_utf8(_path_utf8),
+StateFile::StateFile(Path &&_path,
+		     Partition &_partition, EventLoop &_loop)
+	:TimeoutMonitor(_loop),
+	 path(std::move(_path)), path_utf8(path.ToUTF8()),
 	 partition(_partition),
 	 prev_volume_version(0), prev_output_version(0),
 	 prev_playlist_version(0)
 {
-	ScheduleSeconds(5 * 60);
+}
+
+void
+StateFile::RememberVersions()
+{
+	prev_volume_version = sw_volume_state_get_hash();
+	prev_output_version = audio_output_state_get_version();
+	prev_playlist_version = playlist_state_get_hash(&partition.playlist,
+							&partition.pc);
+}
+
+bool
+StateFile::IsModified() const
+{
+	return prev_volume_version != sw_volume_state_get_hash() ||
+		prev_output_version != audio_output_state_get_version() ||
+		prev_playlist_version != playlist_state_get_hash(&partition.playlist,
+								 &partition.pc);
 }
 
 void
@@ -62,10 +80,7 @@ StateFile::Write()
 
 	fclose(fp);
 
-	prev_volume_version = sw_volume_state_get_hash();
-	prev_output_version = audio_output_state_get_version();
-	prev_playlist_version = playlist_state_get_hash(&partition.playlist,
-							&partition.pc);
+	RememberVersions();
 }
 
 void
@@ -92,33 +107,18 @@ StateFile::Read()
 			g_warning("Unrecognized line in state file: %s", line);
 	}
 
-	prev_volume_version = sw_volume_state_get_hash();
-	prev_output_version = audio_output_state_get_version();
-	prev_playlist_version = playlist_state_get_hash(&partition.playlist,
-							&partition.pc);
+	RememberVersions();
 }
 
-inline void
-StateFile::AutoWrite()
+void
+StateFile::CheckModified()
 {
-	if (prev_volume_version == sw_volume_state_get_hash() &&
-	    prev_output_version == audio_output_state_get_version() &&
-	    prev_playlist_version == playlist_state_get_hash(&partition.playlist,
-							     &partition.pc))
-		/* nothing has changed - don't save the state file,
-		   don't spin up the hard disk */
-		return;
-
-	Write();
+	if (!IsActive() && IsModified())
+		ScheduleSeconds(2 * 60);
 }
 
-/**
- * This function is called every 5 minutes by the GLib main loop, and
- * saves the state file.
- */
-bool
+void
 StateFile::OnTimeout()
 {
-	AutoWrite();
-	return true;
+	Write();
 }

@@ -19,10 +19,12 @@
 
 #include "config.h"
 #include "RssPlaylistPlugin.hxx"
-#include "MemoryPlaylistProvider.hxx"
-#include "input_stream.h"
-#include "song.h"
-#include "tag.h"
+#include "PlaylistPlugin.hxx"
+#include "MemorySongEnumerator.hxx"
+#include "InputStream.hxx"
+#include "Song.hxx"
+#include "tag/Tag.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
@@ -60,7 +62,7 @@ struct RssParser {
 	 * The current song.  It is allocated after the "location"
 	 * element.
 	 */
-	struct song *song;
+	Song *song;
 
 	RssParser()
 		:state(ROOT) {}
@@ -78,11 +80,11 @@ get_attribute(const gchar **attribute_names, const gchar **attribute_values,
 }
 
 static void
-rss_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
+rss_start_element(gcc_unused GMarkupParseContext *context,
 		  const gchar *element_name,
 		  const gchar **attribute_names,
 		  const gchar **attribute_values,
-		  gpointer user_data, G_GNUC_UNUSED GError **error)
+		  gpointer user_data, gcc_unused GError **error)
 {
 	RssParser *parser = (RssParser *)user_data;
 
@@ -90,7 +92,7 @@ rss_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
 	case RssParser::ROOT:
 		if (g_ascii_strcasecmp(element_name, "item") == 0) {
 			parser->state = RssParser::ITEM;
-			parser->song = song_remote_new("rss:");
+			parser->song = Song::NewRemote("rss:");
 			parser->tag = TAG_NUM_OF_ITEM_TYPES;
 		}
 
@@ -107,12 +109,12 @@ rss_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
 				   replace the existing song's URI,
 				   because that attribute is
 				   immutable */
-				struct song *song = song_remote_new(href);
+				Song *song = Song::NewRemote(href);
 
 				if (parser->song != NULL) {
 					song->tag = parser->song->tag;
 					parser->song->tag = NULL;
-					song_free(parser->song);
+					parser->song->Free();
 				}
 
 				parser->song = song;
@@ -127,9 +129,9 @@ rss_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
 }
 
 static void
-rss_end_element(G_GNUC_UNUSED GMarkupParseContext *context,
+rss_end_element(gcc_unused GMarkupParseContext *context,
 		const gchar *element_name,
-		gpointer user_data, G_GNUC_UNUSED GError **error)
+		gpointer user_data, gcc_unused GError **error)
 {
 	RssParser *parser = (RssParser *)user_data;
 
@@ -142,7 +144,7 @@ rss_end_element(G_GNUC_UNUSED GMarkupParseContext *context,
 			if (strcmp(parser->song->uri, "rss:") != 0)
 				parser->songs.emplace_front(parser->song);
 			else
-				song_free(parser->song);
+				parser->song->Free();
 
 			parser->state = RssParser::ROOT;
 		} else
@@ -153,9 +155,9 @@ rss_end_element(G_GNUC_UNUSED GMarkupParseContext *context,
 }
 
 static void
-rss_text(G_GNUC_UNUSED GMarkupParseContext *context,
+rss_text(gcc_unused GMarkupParseContext *context,
 	 const gchar *text, gsize text_len,
-	 gpointer user_data, G_GNUC_UNUSED GError **error)
+	 gpointer user_data, gcc_unused GError **error)
 {
 	RssParser *parser = (RssParser *)user_data;
 
@@ -166,9 +168,9 @@ rss_text(G_GNUC_UNUSED GMarkupParseContext *context,
 	case RssParser::ITEM:
 		if (parser->tag != TAG_NUM_OF_ITEM_TYPES) {
 			if (parser->song->tag == NULL)
-				parser->song->tag = tag_new();
-			tag_add_item_n(parser->song->tag, parser->tag,
-				       text, text_len);
+				parser->song->tag = new Tag();
+			parser->song->tag->AddItem(parser->tag,
+						   text, text_len);
 		}
 
 		break;
@@ -189,7 +191,7 @@ rss_parser_destroy(gpointer data)
 	RssParser *parser = (RssParser *)data;
 
 	if (parser->state >= RssParser::ITEM)
-		song_free(parser->song);
+		parser->song->Free();
 }
 
 /*
@@ -197,7 +199,7 @@ rss_parser_destroy(gpointer data)
  *
  */
 
-static struct playlist_provider *
+static SongEnumerator *
 rss_open_stream(struct input_stream *is)
 {
 	RssParser parser;
@@ -205,6 +207,7 @@ rss_open_stream(struct input_stream *is)
 	char buffer[1024];
 	size_t nbytes;
 	bool success;
+	Error error2;
 	GError *error = NULL;
 
 	/* parse the RSS XML file */
@@ -214,13 +217,11 @@ rss_open_stream(struct input_stream *is)
 					     &parser, rss_parser_destroy);
 
 	while (true) {
-		nbytes = input_stream_lock_read(is, buffer, sizeof(buffer),
-						&error);
+		nbytes = is->LockRead(buffer, sizeof(buffer), error2);
 		if (nbytes == 0) {
-			if (error != NULL) {
+			if (error2.IsDefined()) {
 				g_markup_parse_context_free(context);
-				g_warning("%s", error->message);
-				g_error_free(error);
+				g_warning("%s", error2.GetMessage());
 				return NULL;
 			}
 
@@ -246,8 +247,8 @@ rss_open_stream(struct input_stream *is)
 	}
 
 	parser.songs.reverse();
-	MemoryPlaylistProvider *playlist =
-		new MemoryPlaylistProvider(std::move(parser.songs));
+	MemorySongEnumerator *playlist =
+		new MemorySongEnumerator(std::move(parser.songs));
 
 	g_markup_parse_context_free(context);
 
@@ -272,8 +273,6 @@ const struct playlist_plugin rss_playlist_plugin = {
 	nullptr,
 	nullptr,
 	rss_open_stream,
-	nullptr,
-	nullptr,
 
 	nullptr,
 	rss_suffixes,

@@ -20,15 +20,7 @@
 #ifndef MPD_LOG_HXX
 #define MPD_LOG_HXX
 
-#include <glib.h>
-#include <stdbool.h>
-
-G_GNUC_CONST
-static inline GQuark
-log_quark(void)
-{
-	return g_quark_from_static_string("log");
-}
+class Error;
 
 /**
  * Configure a logging destination for daemon startup, before the
@@ -42,7 +34,7 @@ void
 log_early_init(bool verbose);
 
 bool
-log_init(bool verbose, bool use_stdout, GError **error_r);
+log_init(bool verbose, bool use_stdout, Error &error);
 
 void
 log_deinit(void);

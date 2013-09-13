@@ -20,10 +20,11 @@
 #include "config.h"
 #include "IOThread.hxx"
 #include "DecoderList.hxx"
-#include "decoder_api.h"
+#include "DecoderAPI.hxx"
 #include "InputInit.hxx"
-#include "input_stream.h"
-#include "audio_format.h"
+#include "InputStream.hxx"
+#include "AudioFormat.hxx"
+#include "util/Error.hxx"
 #include "stdbin.h"
 
 #include <glib.h>
@@ -33,8 +34,8 @@
 #include <stdlib.h>
 
 static void
-my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+my_log_func(const gchar *log_domain, gcc_unused GLogLevelFlags log_level,
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_domain != NULL)
 		g_printerr("%s: %s\n", log_domain, message);
@@ -52,14 +53,14 @@ struct decoder {
 
 void
 decoder_initialized(struct decoder *decoder,
-		    const struct audio_format *audio_format,
-		    G_GNUC_UNUSED bool seekable,
-		    G_GNUC_UNUSED float total_time)
+		    const AudioFormat audio_format,
+		    gcc_unused bool seekable,
+		    gcc_unused float total_time)
 {
 	struct audio_format_string af_string;
 
 	assert(!decoder->initialized);
-	assert(audio_format_valid(audio_format));
+	assert(audio_format.IsValid());
 
 	g_printerr("audio_format=%s\n",
 		   audio_format_to_string(audio_format, &af_string));
@@ -68,58 +69,58 @@ decoder_initialized(struct decoder *decoder,
 }
 
 enum decoder_command
-decoder_get_command(G_GNUC_UNUSED struct decoder *decoder)
+decoder_get_command(gcc_unused struct decoder *decoder)
 {
 	return DECODE_COMMAND_NONE;
 }
 
-void decoder_command_finished(G_GNUC_UNUSED struct decoder *decoder)
+void decoder_command_finished(gcc_unused struct decoder *decoder)
 {
 }
 
-double decoder_seek_where(G_GNUC_UNUSED struct decoder *decoder)
+double decoder_seek_where(gcc_unused struct decoder *decoder)
 {
 	return 1.0;
 }
 
-void decoder_seek_error(G_GNUC_UNUSED struct decoder *decoder)
+void decoder_seek_error(gcc_unused struct decoder *decoder)
 {
 }
 
 size_t
-decoder_read(G_GNUC_UNUSED struct decoder *decoder,
+decoder_read(gcc_unused struct decoder *decoder,
 	     struct input_stream *is,
 	     void *buffer, size_t length)
 {
-	return input_stream_lock_read(is, buffer, length, NULL);
+	return is->LockRead(buffer, length, IgnoreError());
 }
 
 void
-decoder_timestamp(G_GNUC_UNUSED struct decoder *decoder,
-		  G_GNUC_UNUSED double t)
+decoder_timestamp(gcc_unused struct decoder *decoder,
+		  gcc_unused double t)
 {
 }
 
 enum decoder_command
-decoder_data(G_GNUC_UNUSED struct decoder *decoder,
-	     G_GNUC_UNUSED struct input_stream *is,
+decoder_data(gcc_unused struct decoder *decoder,
+	     gcc_unused struct input_stream *is,
 	     const void *data, size_t datalen,
-	     G_GNUC_UNUSED uint16_t kbit_rate)
+	     gcc_unused uint16_t kbit_rate)
 {
-	G_GNUC_UNUSED ssize_t nbytes = write(1, data, datalen);
+	gcc_unused ssize_t nbytes = write(1, data, datalen);
 	return DECODE_COMMAND_NONE;
 }
 
 enum decoder_command
-decoder_tag(G_GNUC_UNUSED struct decoder *decoder,
-	    G_GNUC_UNUSED struct input_stream *is,
-	    G_GNUC_UNUSED const struct tag *tag)
+decoder_tag(gcc_unused struct decoder *decoder,
+	    gcc_unused struct input_stream *is,
+	    gcc_unused Tag &&tag)
 {
 	return DECODE_COMMAND_NONE;
 }
 
 void
-decoder_replay_gain(G_GNUC_UNUSED struct decoder *decoder,
+decoder_replay_gain(gcc_unused struct decoder *decoder,
 		    const struct replay_gain_info *replay_gain_info)
 {
 	const struct replay_gain_tuple *tuple =
@@ -135,7 +136,7 @@ decoder_replay_gain(G_GNUC_UNUSED struct decoder *decoder,
 }
 
 void
-decoder_mixramp(G_GNUC_UNUSED struct decoder *decoder,
+decoder_mixramp(gcc_unused struct decoder *decoder,
 		char *mixramp_start, char *mixramp_end)
 {
 	g_free(mixramp_start);
@@ -144,7 +145,6 @@ decoder_mixramp(G_GNUC_UNUSED struct decoder *decoder,
 
 int main(int argc, char **argv)
 {
-	GError *error = NULL;
 	const char *decoder_name;
 	struct decoder decoder;
 
@@ -156,19 +156,18 @@ int main(int argc, char **argv)
 	decoder_name = argv[1];
 	decoder.uri = argv[2];
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
+#endif
+
 	g_log_set_default_handler(my_log_func, NULL);
 
 	io_thread_init();
-	if (!io_thread_start(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		return EXIT_FAILURE;
-	}
+	io_thread_start();
 
-	if (!input_stream_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	Error error;
+	if (!input_stream_global_init(error)) {
+		g_warning("%s", error.GetMessage());
 		return 2;
 	}
 
@@ -189,21 +188,20 @@ int main(int argc, char **argv)
 		Mutex mutex;
 		Cond cond;
 
-		struct input_stream *is =
-			input_stream_open(decoder.uri, mutex, cond, &error);
+		input_stream *is =
+			input_stream::Open(decoder.uri, mutex, cond, error);
 		if (is == NULL) {
-			if (error != NULL) {
-				g_warning("%s", error->message);
-				g_error_free(error);
-			} else
-				g_printerr("input_stream_open() failed\n");
+			if (error.IsDefined())
+				g_warning("%s", error.GetMessage());
+			else
+				g_printerr("input_stream::Open() failed\n");
 
 			return 1;
 		}
 
 		decoder_plugin_stream_decode(decoder.plugin, &decoder, is);
 
-		input_stream_close(is);
+		is->Close();
 	} else {
 		g_printerr("Decoder plugin is not usable\n");
 		return 1;

@@ -23,7 +23,7 @@
 #include "InputInternal.hxx"
 #include "InputStream.hxx"
 #include "InputPlugin.hxx"
-#include "tag.h"
+#include "tag/Tag.hxx"
 
 extern "C" {
 #include <despotify.h>
@@ -42,7 +42,7 @@ struct DespotifyInputStream {
 
 	struct despotify_session *session;
 	struct ds_track *track;
-	struct tag *tag;
+	Tag *tag;
 	struct ds_pcm_data pcm;
 	size_t len_available;
 	bool eof;
@@ -64,8 +64,7 @@ struct DespotifyInputStream {
 	}
 
 	~DespotifyInputStream() {
-		if (tag != NULL)
-			tag_free(tag);
+		delete tag;
 
 		despotify_free_track(track);
 	}
@@ -96,8 +95,8 @@ refill_buffer(DespotifyInputStream *ctx)
 	}
 }
 
-static void callback(G_GNUC_UNUSED struct despotify_session* ds,
-		int sig, G_GNUC_UNUSED void* data, void* callback_data)
+static void callback(gcc_unused struct despotify_session* ds,
+		     int sig, gcc_unused void* data, void* callback_data)
 {
 	DespotifyInputStream *ctx = (DespotifyInputStream *)callback_data;
 
@@ -125,7 +124,7 @@ static void callback(G_GNUC_UNUSED struct despotify_session* ds,
 static struct input_stream *
 input_despotify_open(const char *url,
 		     Mutex &mutex, Cond &cond,
-		     G_GNUC_UNUSED GError **error_r)
+		     gcc_unused Error &error)
 {
 	struct despotify_session *session;
 	struct ds_link *ds_link;
@@ -173,7 +172,7 @@ input_despotify_open(const char *url,
 
 static size_t
 input_despotify_read(struct input_stream *is, void *ptr, size_t size,
-	       G_GNUC_UNUSED GError **error_r)
+		     gcc_unused Error &error)
 {
 	DespotifyInputStream *ctx = (DespotifyInputStream *)is;
 	size_t to_cpy = size;
@@ -208,19 +207,11 @@ input_despotify_eof(struct input_stream *is)
 	return ctx->eof;
 }
 
-static bool
-input_despotify_seek(G_GNUC_UNUSED struct input_stream *is,
-	       G_GNUC_UNUSED goffset offset, G_GNUC_UNUSED int whence,
-	       G_GNUC_UNUSED GError **error_r)
-{
-	return false;
-}
-
-static struct tag *
+static Tag *
 input_despotify_tag(struct input_stream *is)
 {
 	DespotifyInputStream *ctx = (DespotifyInputStream *)is;
-	struct tag *tag = ctx->tag;
+	Tag *tag = ctx->tag;
 
 	ctx->tag = NULL;
 
@@ -235,9 +226,9 @@ const struct input_plugin input_plugin_despotify = {
 	input_despotify_close,
 	nullptr,
 	nullptr,
-	.tag = input_despotify_tag,
+	input_despotify_tag,
 	nullptr,
 	input_despotify_read,
 	input_despotify_eof,
-	input_despotify_seek,
+	nullptr,
 };

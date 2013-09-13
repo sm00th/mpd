@@ -19,10 +19,12 @@
 
 #include "config.h"
 #include "AsxPlaylistPlugin.hxx"
-#include "MemoryPlaylistProvider.hxx"
-#include "input_stream.h"
-#include "song.h"
-#include "tag.h"
+#include "PlaylistPlugin.hxx"
+#include "MemorySongEnumerator.hxx"
+#include "InputStream.hxx"
+#include "Song.hxx"
+#include "tag/Tag.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
@@ -60,7 +62,7 @@ struct AsxParser {
 	 * The current song.  It is allocated after the "location"
 	 * element.
 	 */
-	struct song *song;
+	Song *song;
 
 	AsxParser()
 		:state(ROOT) {}
@@ -79,11 +81,11 @@ get_attribute(const gchar **attribute_names, const gchar **attribute_values,
 }
 
 static void
-asx_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
+asx_start_element(gcc_unused GMarkupParseContext *context,
 		  const gchar *element_name,
 		  const gchar **attribute_names,
 		  const gchar **attribute_values,
-		  gpointer user_data, G_GNUC_UNUSED GError **error)
+		  gpointer user_data, gcc_unused GError **error)
 {
 	AsxParser *parser = (AsxParser *)user_data;
 
@@ -91,7 +93,7 @@ asx_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
 	case AsxParser::ROOT:
 		if (g_ascii_strcasecmp(element_name, "entry") == 0) {
 			parser->state = AsxParser::ENTRY;
-			parser->song = song_remote_new("asx:");
+			parser->song = Song::NewRemote("asx:");
 			parser->tag = TAG_NUM_OF_ITEM_TYPES;
 		}
 
@@ -108,12 +110,12 @@ asx_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
 				   replace the existing song's URI,
 				   because that attribute is
 				   immutable */
-				struct song *song = song_remote_new(href);
+				Song *song = Song::NewRemote(href);
 
 				if (parser->song != NULL) {
 					song->tag = parser->song->tag;
 					parser->song->tag = NULL;
-					song_free(parser->song);
+					parser->song->Free();
 				}
 
 				parser->song = song;
@@ -130,9 +132,9 @@ asx_start_element(G_GNUC_UNUSED GMarkupParseContext *context,
 }
 
 static void
-asx_end_element(G_GNUC_UNUSED GMarkupParseContext *context,
+asx_end_element(gcc_unused GMarkupParseContext *context,
 		const gchar *element_name,
-		gpointer user_data, G_GNUC_UNUSED GError **error)
+		gpointer user_data, gcc_unused GError **error)
 {
 	AsxParser *parser = (AsxParser *)user_data;
 
@@ -145,7 +147,7 @@ asx_end_element(G_GNUC_UNUSED GMarkupParseContext *context,
 			if (strcmp(parser->song->uri, "asx:") != 0)
 				parser->songs.emplace_front(parser->song);
 			else
-				song_free(parser->song);
+				parser->song->Free();
 
 			parser->state = AsxParser::ROOT;
 		} else
@@ -156,9 +158,9 @@ asx_end_element(G_GNUC_UNUSED GMarkupParseContext *context,
 }
 
 static void
-asx_text(G_GNUC_UNUSED GMarkupParseContext *context,
+asx_text(gcc_unused GMarkupParseContext *context,
 	 const gchar *text, gsize text_len,
-	 gpointer user_data, G_GNUC_UNUSED GError **error)
+	 gpointer user_data, gcc_unused GError **error)
 {
 	AsxParser *parser = (AsxParser *)user_data;
 
@@ -169,9 +171,9 @@ asx_text(G_GNUC_UNUSED GMarkupParseContext *context,
 	case AsxParser::ENTRY:
 		if (parser->tag != TAG_NUM_OF_ITEM_TYPES) {
 			if (parser->song->tag == NULL)
-				parser->song->tag = tag_new();
-			tag_add_item_n(parser->song->tag, parser->tag,
-				       text, text_len);
+				parser->song->tag = new Tag();
+			parser->song->tag->AddItem(parser->tag,
+						   text, text_len);
 		}
 
 		break;
@@ -192,7 +194,7 @@ asx_parser_destroy(gpointer data)
 	AsxParser *parser = (AsxParser *)data;
 
 	if (parser->state >= AsxParser::ENTRY)
-		song_free(parser->song);
+		parser->song->Free();
 }
 
 /*
@@ -200,7 +202,7 @@ asx_parser_destroy(gpointer data)
  *
  */
 
-static struct playlist_provider *
+static SongEnumerator *
 asx_open_stream(struct input_stream *is)
 {
 	AsxParser parser;
@@ -208,6 +210,7 @@ asx_open_stream(struct input_stream *is)
 	char buffer[1024];
 	size_t nbytes;
 	bool success;
+	Error error2;
 	GError *error = NULL;
 
 	/* parse the ASX XML file */
@@ -217,13 +220,11 @@ asx_open_stream(struct input_stream *is)
 					     &parser, asx_parser_destroy);
 
 	while (true) {
-		nbytes = input_stream_lock_read(is, buffer, sizeof(buffer),
-						&error);
+		nbytes = is->LockRead(buffer, sizeof(buffer), error2);
 		if (nbytes == 0) {
-			if (error != NULL) {
+			if (error2.IsDefined()) {
 				g_markup_parse_context_free(context);
-				g_warning("%s", error->message);
-				g_error_free(error);
+				g_warning("%s", error2.GetMessage());
 				return NULL;
 			}
 
@@ -249,8 +250,8 @@ asx_open_stream(struct input_stream *is)
 	}
 
 	parser.songs.reverse();
-	MemoryPlaylistProvider *playlist =
-		new MemoryPlaylistProvider(std::move(parser.songs));
+	MemorySongEnumerator *playlist =
+		new MemorySongEnumerator(std::move(parser.songs));
 
 	g_markup_parse_context_free(context);
 
@@ -274,8 +275,6 @@ const struct playlist_plugin asx_playlist_plugin = {
 	nullptr,
 	nullptr,
 	asx_open_stream,
-	nullptr,
-	nullptr,
 
 	nullptr,
 	asx_suffixes,

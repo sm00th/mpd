@@ -18,17 +18,15 @@
  */
 
 #include "config.h"
-
-extern "C" {
-#include "mixer_control.h"
-#include "mixer_list.h"
-}
-
+#include "MixerControl.hxx"
+#include "MixerList.hxx"
 #include "FilterRegistry.hxx"
-#include "PcmVolume.hxx"
+#include "pcm/PcmVolume.hxx"
 #include "GlobalEvents.hxx"
 #include "Main.hxx"
 #include "event/Loop.hxx"
+#include "ConfigData.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
@@ -39,34 +37,34 @@ extern "C" {
 EventLoop *main_loop;
 
 #ifdef HAVE_PULSE
-#include "output/pulse_output_plugin.h"
+#include "output/PulseOutputPlugin.hxx"
 
 void
-pulse_output_lock(G_GNUC_UNUSED struct pulse_output *po)
+pulse_output_lock(gcc_unused PulseOutput *po)
 {
 }
 
 void
-pulse_output_unlock(G_GNUC_UNUSED struct pulse_output *po)
+pulse_output_unlock(gcc_unused PulseOutput *po)
 {
 }
 
 void
-pulse_output_set_mixer(G_GNUC_UNUSED struct pulse_output *po,
-		       G_GNUC_UNUSED struct pulse_mixer *pm)
+pulse_output_set_mixer(gcc_unused PulseOutput *po,
+		       gcc_unused PulseMixer *pm)
 {
 }
 
 void
-pulse_output_clear_mixer(G_GNUC_UNUSED struct pulse_output *po,
-			 G_GNUC_UNUSED struct pulse_mixer *pm)
+pulse_output_clear_mixer(gcc_unused PulseOutput *po,
+			 gcc_unused PulseMixer *pm)
 {
 }
 
 bool
-pulse_output_set_volume(G_GNUC_UNUSED struct pulse_output *po,
-			G_GNUC_UNUSED const struct pa_cvolume *volume,
-			G_GNUC_UNUSED GError **error_r)
+pulse_output_set_volume(gcc_unused PulseOutput *po,
+			gcc_unused const struct pa_cvolume *volume,
+			gcc_unused Error &error)
 {
 	return false;
 }
@@ -84,7 +82,7 @@ roar_output_get_volume(gcc_unused RoarOutput *roar)
 
 bool
 roar_output_set_volume(gcc_unused RoarOutput *roar,
-		       G_GNUC_UNUSED unsigned volume)
+		       gcc_unused unsigned volume)
 {
 	return true;
 }
@@ -97,26 +95,23 @@ GlobalEvents::Emit(gcc_unused Event event)
 }
 
 const struct filter_plugin *
-filter_plugin_by_name(G_GNUC_UNUSED const char *name)
+filter_plugin_by_name(gcc_unused const char *name)
 {
 	assert(false);
 	return NULL;
 }
 
 bool
-pcm_volume(G_GNUC_UNUSED void *buffer, G_GNUC_UNUSED size_t length,
-	   G_GNUC_UNUSED enum sample_format format,
-	   G_GNUC_UNUSED int volume)
+pcm_volume(gcc_unused void *buffer, gcc_unused size_t length,
+	   gcc_unused SampleFormat format,
+	   gcc_unused int volume)
 {
 	assert(false);
 	return false;
 }
 
-int main(int argc, G_GNUC_UNUSED char **argv)
+int main(int argc, gcc_unused char **argv)
 {
-	GError *error = NULL;
-	struct mixer *mixer;
-	bool success;
 	int volume;
 
 	if (argc != 2) {
@@ -124,26 +119,27 @@ int main(int argc, G_GNUC_UNUSED char **argv)
 		return 1;
 	}
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
+#endif
 
 	main_loop = new EventLoop(EventLoop::Default());
 
-	mixer = mixer_new(&alsa_mixer_plugin, NULL, NULL, &error);
+	Error error;
+	Mixer *mixer = mixer_new(&alsa_mixer_plugin, nullptr,
+				 config_param(), error);
 	if (mixer == NULL) {
-		g_printerr("mixer_new() failed: %s\n", error->message);
-		g_error_free(error);
+		g_printerr("mixer_new() failed: %s\n", error.GetMessage());
 		return 2;
 	}
 
-	success = mixer_open(mixer, &error);
-	if (!success) {
+	if (!mixer_open(mixer, error)) {
 		mixer_free(mixer);
-		g_printerr("failed to open the mixer: %s\n", error->message);
-		g_error_free(error);
+		g_printerr("failed to open the mixer: %s\n", error.GetMessage());
 		return 2;
 	}
 
-	volume = mixer_get_volume(mixer, &error);
+	volume = mixer_get_volume(mixer, error);
 	mixer_close(mixer);
 	mixer_free(mixer);
 
@@ -152,10 +148,9 @@ int main(int argc, G_GNUC_UNUSED char **argv)
 	assert(volume >= -1 && volume <= 100);
 
 	if (volume < 0) {
-		if (error != NULL) {
+		if (error.IsDefined()) {
 			g_printerr("failed to read volume: %s\n",
-				   error->message);
-			g_error_free(error);
+				   error.GetMessage());
 		} else
 			g_printerr("failed to read volume\n");
 		return 2;

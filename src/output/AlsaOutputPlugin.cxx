@@ -19,9 +19,12 @@
 
 #include "config.h"
 #include "AlsaOutputPlugin.hxx"
-#include "output_api.h"
-#include "mixer_list.h"
-#include "pcm_export.h"
+#include "OutputAPI.hxx"
+#include "MixerList.hxx"
+#include "pcm/PcmExport.hxx"
+#include "util/Manual.hxx"
+#include "util/Error.hxx"
+#include "util/Domain.hxx"
 
 #include <glib.h>
 #include <alsa/asoundlib.h>
@@ -36,9 +39,7 @@
 
 static const char default_device[] = "default";
 
-enum {
-	MPD_ALSA_BUFFER_TIME_US = 500000,
-};
+static constexpr unsigned MPD_ALSA_BUFFER_TIME_US = 500000;
 
 #define MPD_ALSA_RETRY_NR 5
 
@@ -48,7 +49,7 @@ typedef snd_pcm_sframes_t alsa_writei_t(snd_pcm_t * pcm, const void *buffer,
 struct AlsaOutput {
 	struct audio_output base;
 
-	struct pcm_export_state pcm_export;
+	Manual<PcmExport> pcm_export;
 
 	/**
 	 * The configured name of the ALSA device; empty for the
@@ -116,9 +117,9 @@ struct AlsaOutput {
 	AlsaOutput():mode(0), writei(snd_pcm_writei) {
 	}
 
-	bool Init(const config_param *param, GError **error_r) {
+	bool Init(const config_param &param, Error &error) {
 		return ao_base_init(&base, &alsa_output_plugin,
-				    param, error_r);
+				    param, error);
 	}
 
 	void Deinit() {
@@ -126,14 +127,7 @@ struct AlsaOutput {
 	}
 };
 
-/**
- * The quark used for GError.domain.
- */
-static inline GQuark
-alsa_output_quark(void)
-{
-	return g_quark_from_static_string("alsa_output");
-}
+static constexpr Domain alsa_output_domain("alsa_output");
 
 static const char *
 alsa_device(const AlsaOutput *ad)
@@ -142,40 +136,40 @@ alsa_device(const AlsaOutput *ad)
 }
 
 static void
-alsa_configure(AlsaOutput *ad, const struct config_param *param)
+alsa_configure(AlsaOutput *ad, const config_param &param)
 {
-	ad->device = config_get_block_string(param, "device", "");
+	ad->device = param.GetBlockValue("device", "");
 
-	ad->use_mmap = config_get_block_bool(param, "use_mmap", false);
+	ad->use_mmap = param.GetBlockValue("use_mmap", false);
 
-	ad->dsd_usb = config_get_block_bool(param, "dsd_usb", false);
+	ad->dsd_usb = param.GetBlockValue("dsd_usb", false);
 
-	ad->buffer_time = config_get_block_unsigned(param, "buffer_time",
-			MPD_ALSA_BUFFER_TIME_US);
-	ad->period_time = config_get_block_unsigned(param, "period_time", 0);
+	ad->buffer_time = param.GetBlockValue("buffer_time",
+					      MPD_ALSA_BUFFER_TIME_US);
+	ad->period_time = param.GetBlockValue("period_time", 0u);
 
 #ifdef SND_PCM_NO_AUTO_RESAMPLE
-	if (!config_get_block_bool(param, "auto_resample", true))
+	if (!param.GetBlockValue("auto_resample", true))
 		ad->mode |= SND_PCM_NO_AUTO_RESAMPLE;
 #endif
 
 #ifdef SND_PCM_NO_AUTO_CHANNELS
-	if (!config_get_block_bool(param, "auto_channels", true))
+	if (!param.GetBlockValue("auto_channels", true))
 		ad->mode |= SND_PCM_NO_AUTO_CHANNELS;
 #endif
 
 #ifdef SND_PCM_NO_AUTO_FORMAT
-	if (!config_get_block_bool(param, "auto_format", true))
+	if (!param.GetBlockValue("auto_format", true))
 		ad->mode |= SND_PCM_NO_AUTO_FORMAT;
 #endif
 }
 
 static struct audio_output *
-alsa_init(const struct config_param *param, GError **error_r)
+alsa_init(const config_param &param, Error &error)
 {
 	AlsaOutput *ad = new AlsaOutput();
 
-	if (!ad->Init(param, error_r)) {
+	if (!ad->Init(param, error)) {
 		delete ad;
 		return NULL;
 	}
@@ -198,11 +192,11 @@ alsa_finish(struct audio_output *ao)
 }
 
 static bool
-alsa_output_enable(struct audio_output *ao, G_GNUC_UNUSED GError **error_r)
+alsa_output_enable(struct audio_output *ao, gcc_unused Error &error)
 {
 	AlsaOutput *ad = (AlsaOutput *)ao;
 
-	pcm_export_init(&ad->pcm_export);
+	ad->pcm_export.Construct();
 	return true;
 }
 
@@ -211,7 +205,7 @@ alsa_output_disable(struct audio_output *ao)
 {
 	AlsaOutput *ad = (AlsaOutput *)ao;
 
-	pcm_export_deinit(&ad->pcm_export);
+	ad->pcm_export.Destruct();
 }
 
 static bool
@@ -232,31 +226,31 @@ alsa_test_default_device(void)
 }
 
 static snd_pcm_format_t
-get_bitformat(enum sample_format sample_format)
+get_bitformat(SampleFormat sample_format)
 {
 	switch (sample_format) {
-	case SAMPLE_FORMAT_UNDEFINED:
-	case SAMPLE_FORMAT_DSD:
+	case SampleFormat::UNDEFINED:
+	case SampleFormat::DSD:
 		return SND_PCM_FORMAT_UNKNOWN;
 
-	case SAMPLE_FORMAT_S8:
+	case SampleFormat::S8:
 		return SND_PCM_FORMAT_S8;
 
-	case SAMPLE_FORMAT_S16:
+	case SampleFormat::S16:
 		return SND_PCM_FORMAT_S16;
 
-	case SAMPLE_FORMAT_S24_P32:
+	case SampleFormat::S24_P32:
 		return SND_PCM_FORMAT_S24;
 
-	case SAMPLE_FORMAT_S32:
+	case SampleFormat::S32:
 		return SND_PCM_FORMAT_S32;
 
-	case SAMPLE_FORMAT_FLOAT:
+	case SampleFormat::FLOAT:
 		return SND_PCM_FORMAT_FLOAT;
 	}
 
 	assert(false);
-	return SND_PCM_FORMAT_UNKNOWN;
+	gcc_unreachable();
 }
 
 static snd_pcm_format_t
@@ -323,7 +317,7 @@ alsa_try_format_or_packed(snd_pcm_t *pcm, snd_pcm_hw_params_t *hwparams,
  */
 static int
 alsa_output_try_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *hwparams,
-		       enum sample_format sample_format,
+		       SampleFormat sample_format,
 		       bool *packed_r, bool *reverse_endian_r)
 {
 	snd_pcm_format_t alsa_format = get_bitformat(sample_format);
@@ -354,36 +348,36 @@ alsa_output_try_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *hwparams,
  */
 static int
 alsa_output_setup_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *hwparams,
-			 struct audio_format *audio_format,
+			 AudioFormat &audio_format,
 			 bool *packed_r, bool *reverse_endian_r)
 {
 	/* try the input format first */
 
 	int err = alsa_output_try_format(pcm, hwparams,
-					 sample_format(audio_format->format),
+					 audio_format.format,
 					 packed_r, reverse_endian_r);
 
 	/* if unsupported by the hardware, try other formats */
 
-	static const enum sample_format probe_formats[] = {
-		SAMPLE_FORMAT_S24_P32,
-		SAMPLE_FORMAT_S32,
-		SAMPLE_FORMAT_S16,
-		SAMPLE_FORMAT_S8,
-		SAMPLE_FORMAT_UNDEFINED,
+	static const SampleFormat probe_formats[] = {
+		SampleFormat::S24_P32,
+		SampleFormat::S32,
+		SampleFormat::S16,
+		SampleFormat::S8,
+		SampleFormat::UNDEFINED,
 	};
 
 	for (unsigned i = 0;
-	     err == -EINVAL && probe_formats[i] != SAMPLE_FORMAT_UNDEFINED;
+	     err == -EINVAL && probe_formats[i] != SampleFormat::UNDEFINED;
 	     ++i) {
-		const enum sample_format mpd_format = probe_formats[i];
-		if (mpd_format == audio_format->format)
+		const SampleFormat mpd_format = probe_formats[i];
+		if (mpd_format == audio_format.format)
 			continue;
 
 		err = alsa_output_try_format(pcm, hwparams, mpd_format,
 					     packed_r, reverse_endian_r);
 		if (err == 0)
-			audio_format->format = mpd_format;
+			audio_format.format = mpd_format;
 	}
 
 	return err;
@@ -394,11 +388,11 @@ alsa_output_setup_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *hwparams,
  * the configured settings and the audio format.
  */
 static bool
-alsa_setup(AlsaOutput *ad, struct audio_format *audio_format,
-	   bool *packed_r, bool *reverse_endian_r, GError **error)
+alsa_setup(AlsaOutput *ad, AudioFormat &audio_format,
+	   bool *packed_r, bool *reverse_endian_r, Error &error)
 {
-	unsigned int sample_rate = audio_format->sample_rate;
-	unsigned int channels = audio_format->channels;
+	unsigned int sample_rate = audio_format.sample_rate;
+	unsigned int channels = audio_format.channels;
 	int err;
 	const char *cmd = NULL;
 	int retry = MPD_ALSA_RETRY_NR;
@@ -439,11 +433,11 @@ configure_hw:
 	err = alsa_output_setup_format(ad->pcm, hwparams, audio_format,
 				       packed_r, reverse_endian_r);
 	if (err < 0) {
-		g_set_error(error, alsa_output_quark(), err,
-			    "ALSA device \"%s\" does not support format %s: %s",
-			    alsa_device(ad),
-			    sample_format_to_string(sample_format(audio_format->format)),
-			    snd_strerror(-err));
+		error.Format(alsa_output_domain, err,
+			     "ALSA device \"%s\" does not support format %s: %s",
+			     alsa_device(ad),
+			     sample_format_to_string(audio_format.format),
+			     snd_strerror(-err));
 		return false;
 	}
 
@@ -455,23 +449,23 @@ configure_hw:
 	err = snd_pcm_hw_params_set_channels_near(ad->pcm, hwparams,
 						  &channels);
 	if (err < 0) {
-		g_set_error(error, alsa_output_quark(), err,
-			    "ALSA device \"%s\" does not support %i channels: %s",
-			    alsa_device(ad), (int)audio_format->channels,
-			    snd_strerror(-err));
+		error.Format(alsa_output_domain, err,
+			     "ALSA device \"%s\" does not support %i channels: %s",
+			     alsa_device(ad), (int)audio_format.channels,
+			     snd_strerror(-err));
 		return false;
 	}
-	audio_format->channels = (int8_t)channels;
+	audio_format.channels = (int8_t)channels;
 
 	err = snd_pcm_hw_params_set_rate_near(ad->pcm, hwparams,
 					      &sample_rate, NULL);
 	if (err < 0 || sample_rate == 0) {
-		g_set_error(error, alsa_output_quark(), err,
-			    "ALSA device \"%s\" does not support %u Hz audio",
-			    alsa_device(ad), audio_format->sample_rate);
+		error.Format(alsa_output_domain, err,
+			     "ALSA device \"%s\" does not support %u Hz audio",
+			     alsa_device(ad), audio_format.sample_rate);
 		return false;
 	}
-	audio_format->sample_rate = sample_rate;
+	audio_format.sample_rate = sample_rate;
 
 	snd_pcm_uframes_t buffer_size_min, buffer_size_max;
 	snd_pcm_hw_params_get_buffer_size_min(hwparams, &buffer_size_min);
@@ -595,29 +589,29 @@ configure_hw:
 	return true;
 
 error:
-	g_set_error(error, alsa_output_quark(), err,
-		    "Error opening ALSA device \"%s\" (%s): %s",
-		    alsa_device(ad), cmd, snd_strerror(-err));
+	error.Format(alsa_output_domain, err,
+		     "Error opening ALSA device \"%s\" (%s): %s",
+		     alsa_device(ad), cmd, snd_strerror(-err));
 	return false;
 }
 
 static bool
-alsa_setup_dsd(AlsaOutput *ad, struct audio_format *audio_format,
+alsa_setup_dsd(AlsaOutput *ad, const AudioFormat audio_format,
 	       bool *shift8_r, bool *packed_r, bool *reverse_endian_r,
-	       GError **error_r)
+	       Error &error)
 {
 	assert(ad->dsd_usb);
-	assert(audio_format->format == SAMPLE_FORMAT_DSD);
+	assert(audio_format.format == SampleFormat::DSD);
 
 	/* pass 24 bit to alsa_setup() */
 
-	struct audio_format usb_format = *audio_format;
-	usb_format.format = SAMPLE_FORMAT_S24_P32;
+	AudioFormat usb_format = audio_format;
+	usb_format.format = SampleFormat::S24_P32;
 	usb_format.sample_rate /= 2;
 
-	const struct audio_format check = usb_format;
+	const AudioFormat check = usb_format;
 
-	if (!alsa_setup(ad, &usb_format, packed_r, reverse_endian_r, error_r))
+	if (!alsa_setup(ad, usb_format, packed_r, reverse_endian_r, error))
 		return false;
 
 	/* if the device allows only 32 bit, shift all DSD-over-USB
@@ -625,16 +619,16 @@ alsa_setup_dsd(AlsaOutput *ad, struct audio_format *audio_format,
 	   the DSD-over-USB documentation does not specify whether
 	   this is legal, but there is anecdotical evidence that this
 	   is possible (and the only option for some devices) */
-	*shift8_r = usb_format.format == SAMPLE_FORMAT_S32;
-	if (usb_format.format == SAMPLE_FORMAT_S32)
-		usb_format.format = SAMPLE_FORMAT_S24_P32;
+	*shift8_r = usb_format.format == SampleFormat::S32;
+	if (usb_format.format == SampleFormat::S32)
+		usb_format.format = SampleFormat::S24_P32;
 
-	if (!audio_format_equals(&usb_format, &check)) {
+	if (usb_format != check) {
 		/* no bit-perfect playback, which is required
 		   for DSD over USB */
-		g_set_error(error_r, alsa_output_quark(), 0,
-			    "Failed to configure DSD-over-USB on ALSA device \"%s\"",
-			    alsa_device(ad));
+		error.Format(alsa_output_domain,
+			     "Failed to configure DSD-over-USB on ALSA device \"%s\"",
+			     alsa_device(ad));
 		g_free(ad->silence);
 		return false;
 	}
@@ -643,38 +637,37 @@ alsa_setup_dsd(AlsaOutput *ad, struct audio_format *audio_format,
 }
 
 static bool
-alsa_setup_or_dsd(AlsaOutput *ad, struct audio_format *audio_format,
-		  GError **error_r)
+alsa_setup_or_dsd(AlsaOutput *ad, AudioFormat &audio_format,
+		  Error &error)
 {
 	bool shift8 = false, packed, reverse_endian;
 
 	const bool dsd_usb = ad->dsd_usb &&
-		audio_format->format == SAMPLE_FORMAT_DSD;
+		audio_format.format == SampleFormat::DSD;
 	const bool success = dsd_usb
 		? alsa_setup_dsd(ad, audio_format,
 				 &shift8, &packed, &reverse_endian,
-				 error_r)
+				 error)
 		: alsa_setup(ad, audio_format, &packed, &reverse_endian,
-			     error_r);
+			     error);
 	if (!success)
 		return false;
 
-	pcm_export_open(&ad->pcm_export,
-			sample_format(audio_format->format),
-			audio_format->channels,
-			dsd_usb, shift8, packed, reverse_endian);
+	ad->pcm_export->Open(audio_format.format,
+			     audio_format.channels,
+			     dsd_usb, shift8, packed, reverse_endian);
 	return true;
 }
 
 static bool
-alsa_open(struct audio_output *ao, struct audio_format *audio_format, GError **error)
+alsa_open(struct audio_output *ao, AudioFormat &audio_format, Error &error)
 {
 	AlsaOutput *ad = (AlsaOutput *)ao;
 
 	int err = snd_pcm_open(&ad->pcm, alsa_device(ad),
 			       SND_PCM_STREAM_PLAYBACK, ad->mode);
 	if (err < 0) {
-		g_set_error(error, alsa_output_quark(), err,
+		error.Format(alsa_output_domain, err,
 			    "Failed to open ALSA device \"%s\": %s",
 			    alsa_device(ad), snd_strerror(err));
 		return false;
@@ -688,9 +681,8 @@ alsa_open(struct audio_output *ao, struct audio_format *audio_format, GError **e
 		return false;
 	}
 
-	ad->in_frame_size = audio_format_frame_size(audio_format);
-	ad->out_frame_size = pcm_export_frame_size(&ad->pcm_export,
-						   audio_format);
+	ad->in_frame_size = audio_format.GetFrameSize();
+	ad->out_frame_size = ad->pcm_export->GetFrameSize(audio_format);
 
 	return true;
 }
@@ -803,13 +795,13 @@ alsa_close(struct audio_output *ao)
 
 static size_t
 alsa_play(struct audio_output *ao, const void *chunk, size_t size,
-	  GError **error)
+	  Error &error)
 {
 	AlsaOutput *ad = (AlsaOutput *)ao;
 
 	assert(size % ad->in_frame_size == 0);
 
-	chunk = pcm_export(&ad->pcm_export, chunk, size, &size);
+	chunk = ad->pcm_export->Export(chunk, size, size);
 
 	assert(size % ad->out_frame_size == 0);
 
@@ -822,14 +814,12 @@ alsa_play(struct audio_output *ao, const void *chunk, size_t size,
 				% ad->period_frames;
 
 			size_t bytes_written = ret * ad->out_frame_size;
-			return pcm_export_source_size(&ad->pcm_export,
-						      bytes_written);
+			return ad->pcm_export->CalcSourceSize(bytes_written);
 		}
 
 		if (ret < 0 && ret != -EAGAIN && ret != -EINTR &&
 		    alsa_recover(ad, ret) < 0) {
-			g_set_error(error, alsa_output_quark(), errno,
-				    "%s", snd_strerror(-errno));
+			error.Set(alsa_output_domain, ret, snd_strerror(-ret));
 			return 0;
 		}
 	}

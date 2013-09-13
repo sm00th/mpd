@@ -42,8 +42,8 @@
 #ifndef MPD_STICKER_DATABASE_HXX
 #define MPD_STICKER_DATABASE_HXX
 
-#include "gerror.h"
-
+class Error;
+class Path;
 struct sticker;
 
 /**
@@ -54,7 +54,7 @@ struct sticker;
  * @return true on success, false on error
  */
 bool
-sticker_global_init(const char *path, GError **error_r);
+sticker_global_init(Path &&path, Error &error);
 
 /**
  * Close the sticker database.

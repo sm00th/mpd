@@ -42,15 +42,31 @@ class StateFile final : private TimeoutMonitor {
 		prev_playlist_version;
 
 public:
-	StateFile(Path &&path, const char *path_utf8,
-	          Partition &partition, EventLoop &loop);
+	StateFile(Path &&path, Partition &partition, EventLoop &loop);
 
 	void Read();
 	void Write();
-	void AutoWrite();
+
+	/**
+	 * Schedules a write if MPD's state was modified.
+	 */
+	void CheckModified();
 
 private:
-	virtual bool OnTimeout() override;
+	/**
+	 * Save the current state versions for use with IsModified().
+	 */
+	void RememberVersions();
+
+	/**
+	 * Check if MPD's state was modified since the last
+	 * RememberVersions() call.
+	 */
+	gcc_pure
+	bool IsModified() const;
+
+	/* virtual methods from TimeoutMonitor */
+	virtual void OnTimeout() override;
 };
 
 #endif /* STATE_FILE_H */

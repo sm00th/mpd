@@ -21,12 +21,15 @@
 #define MPD_GLOBAL_EVENTS_HXX
 
 #ifdef WIN32
+#include <windows.h>
 /* DELETE is a WIN32 macro that poisons our namespace; this is a
    kludge to allow us to use it anyway */
 #ifdef DELETE
 #undef DELETE
 #endif
 #endif
+
+class EventLoop;
 
 namespace GlobalEvents {
 	enum Event {
@@ -45,21 +48,20 @@ namespace GlobalEvents {
 		/** the current song's tag has changed */
 		TAG,
 
-		/** SIGHUP received: reload configuration, roll log file */
-		RELOAD,
-
 		/** a hardware mixer plugin has detected a change */
 		MIXER,
 
+#ifdef WIN32
 		/** shutdown requested */
 		SHUTDOWN,
+#endif
 
 		MAX
 	};
 
 	typedef void (*Handler)();
 
-	void Initialize();
+	void Initialize(EventLoop &loop);
 
 	void Deinitialize();
 

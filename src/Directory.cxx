@@ -22,10 +22,11 @@
 #include "SongFilter.hxx"
 #include "PlaylistVector.hxx"
 #include "DatabaseLock.hxx"
+#include "SongSort.hxx"
+#include "Song.hxx"
+#include "util/Error.hxx"
 
 extern "C" {
-#include "song.h"
-#include "song_sort.h"
 #include "util/list_sort.h"
 }
 
@@ -68,9 +69,9 @@ Directory::Directory(const char *_path)
 
 Directory::~Directory()
 {
-	struct song *song, *ns;
+	Song *song, *ns;
 	directory_for_each_song_safe(song, ns, this)
-		song_free(song);
+		song->Free();
 
 	Directory *child, *n;
 	directory_for_each_child_safe(child, n, this)
@@ -208,7 +209,7 @@ Directory::LookupDirectory(const char *uri)
 }
 
 void
-Directory::AddSong(struct song *song)
+Directory::AddSong(Song *song)
 {
 	assert(holding_db_lock());
 	assert(song != NULL);
@@ -218,7 +219,7 @@ Directory::AddSong(struct song *song)
 }
 
 void
-Directory::RemoveSong(struct song *song)
+Directory::RemoveSong(Song *song)
 {
 	assert(holding_db_lock());
 	assert(song != NULL);
@@ -227,13 +228,13 @@ Directory::RemoveSong(struct song *song)
 	list_del(&song->siblings);
 }
 
-const song *
+const Song *
 Directory::FindSong(const char *name_utf8) const
 {
 	assert(holding_db_lock());
 	assert(name_utf8 != NULL);
 
-	struct song *song;
+	Song *song;
 	directory_for_each_song(song, this) {
 		assert(song->parent == this);
 
@@ -244,7 +245,7 @@ Directory::FindSong(const char *name_utf8) const
 	return NULL;
 }
 
-struct song *
+Song *
 Directory::LookupSong(const char *uri)
 {
 	char *duplicated, *base;
@@ -266,7 +267,7 @@ Directory::LookupSong(const char *uri)
 	} else
 		base = duplicated;
 
-	struct song *song = d->FindSong(base);
+	Song *song = d->FindSong(base);
 	assert(song == NULL || song->parent == d);
 
 	g_free(duplicated);
@@ -275,7 +276,7 @@ Directory::LookupSong(const char *uri)
 }
 
 static int
-directory_cmp(G_GNUC_UNUSED void *priv,
+directory_cmp(gcc_unused void *priv,
 	      struct list_head *_a, struct list_head *_b)
 {
 	const Directory *a = (const Directory *)_a;
@@ -300,34 +301,34 @@ bool
 Directory::Walk(bool recursive, const SongFilter *filter,
 		VisitDirectory visit_directory, VisitSong visit_song,
 		VisitPlaylist visit_playlist,
-		GError **error_r) const
+		Error &error) const
 {
-	assert(error_r == NULL || *error_r == NULL);
+	assert(!error.IsDefined());
 
 	if (visit_song) {
-		struct song *song;
+		Song *song;
 		directory_for_each_song(song, this)
 			if ((filter == nullptr || filter->Match(*song)) &&
-			    !visit_song(*song, error_r))
+			    !visit_song(*song, error))
 				return false;
 	}
 
 	if (visit_playlist) {
 		for (const PlaylistInfo &p : playlists)
-			if (!visit_playlist(p, *this, error_r))
+			if (!visit_playlist(p, *this, error))
 				return false;
 	}
 
 	Directory *child;
 	directory_for_each_child(child, this) {
 		if (visit_directory &&
-		    !visit_directory(*child, error_r))
+		    !visit_directory(*child, error))
 			return false;
 
 		if (recursive &&
 		    !child->Walk(recursive, filter,
 				 visit_directory, visit_song, visit_playlist,
-				 error_r))
+				 error))
 			return false;
 	}
 

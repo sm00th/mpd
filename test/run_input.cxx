@@ -20,12 +20,12 @@
 #include "config.h"
 #include "TagSave.hxx"
 #include "stdbin.h"
-#include "tag.h"
-#include "conf.h"
-#include "input_stream.h"
+#include "tag/Tag.hxx"
+#include "ConfigGlobal.hxx"
 #include "InputStream.hxx"
 #include "InputInit.hxx"
 #include "IOThread.hxx"
+#include "util/Error.hxx"
 
 #ifdef ENABLE_ARCHIVE
 #include "ArchiveList.hxx"
@@ -37,8 +37,8 @@
 #include <stdlib.h>
 
 static void
-my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
-	    const gchar *message, G_GNUC_UNUSED gpointer user_data)
+my_log_func(const gchar *log_domain, gcc_unused GLogLevelFlags log_level,
+	    const gchar *message, gcc_unused gpointer user_data)
 {
 	if (log_domain != NULL)
 		g_printerr("%s: %s\n", log_domain, message);
@@ -49,21 +49,20 @@ my_log_func(const gchar *log_domain, G_GNUC_UNUSED GLogLevelFlags log_level,
 static int
 dump_input_stream(struct input_stream *is)
 {
-	GError *error = NULL;
+	Error error;
 	char buffer[4096];
 	size_t num_read;
 	ssize_t num_written;
 
-	input_stream_lock(is);
+	is->Lock();
 
 	/* wait until the stream becomes ready */
 
-	input_stream_wait_ready(is);
+	is->WaitReady();
 
-	if (!input_stream_check(is, &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		input_stream_unlock(is);
+	if (!is->Check(error)) {
+		g_warning("%s", error.GetMessage());
+		is->Unlock();
 		return EXIT_FAILURE;
 	}
 
@@ -74,21 +73,18 @@ dump_input_stream(struct input_stream *is)
 
 	/* read data and tags from the stream */
 
-	while (!input_stream_eof(is)) {
-		struct tag *tag = input_stream_tag(is);
+	while (!is->IsEOF()) {
+		Tag *tag = is->ReadTag();
 		if (tag != NULL) {
 			g_printerr("Received a tag:\n");
-			tag_save(stderr, tag);
-			tag_free(tag);
+			tag_save(stderr, *tag);
+			delete tag;
 		}
 
-		num_read = input_stream_read(is, buffer, sizeof(buffer),
-					     &error);
+		num_read = is->Read(buffer, sizeof(buffer), error);
 		if (num_read == 0) {
-			if (error != NULL) {
-				g_warning("%s", error->message);
-				g_error_free(error);
-			}
+			if (error.IsDefined())
+				g_warning("%s", error.GetMessage());
 
 			break;
 		}
@@ -98,21 +94,20 @@ dump_input_stream(struct input_stream *is)
 			break;
 	}
 
-	if (!input_stream_check(is, &error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		input_stream_unlock(is);
+	if (!is->Check(error)) {
+		g_warning("%s", error.GetMessage());
+		is->Unlock();
 		return EXIT_FAILURE;
 	}
 
-	input_stream_unlock(is);
+	is->Unlock();
 
 	return 0;
 }
 
 int main(int argc, char **argv)
 {
-	GError *error = NULL;
+	Error error;
 	struct input_stream *is;
 	int ret;
 
@@ -123,7 +118,10 @@ int main(int argc, char **argv)
 
 	/* initialize GLib */
 
+#if !GLIB_CHECK_VERSION(2,32,0)
 	g_thread_init(NULL);
+#endif
+
 	g_log_set_default_handler(my_log_func, NULL);
 
 	/* initialize MPD */
@@ -131,19 +129,14 @@ int main(int argc, char **argv)
 	config_global_init();
 
 	io_thread_init();
-	if (!io_thread_start(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
-		return EXIT_FAILURE;
-	}
+	io_thread_start();
 
 #ifdef ENABLE_ARCHIVE
 	archive_plugin_init_all();
 #endif
 
-	if (!input_stream_global_init(&error)) {
-		g_warning("%s", error->message);
-		g_error_free(error);
+	if (!input_stream_global_init(error)) {
+		g_warning("%s", error.GetMessage());
 		return 2;
 	}
 
@@ -152,16 +145,15 @@ int main(int argc, char **argv)
 	Mutex mutex;
 	Cond cond;
 
-	is = input_stream_open(argv[1], mutex, cond, &error);
+	is = input_stream::Open(argv[1], mutex, cond, error);
 	if (is != NULL) {
 		ret = dump_input_stream(is);
-		input_stream_close(is);
+		is->Close();
 	} else {
-		if (error != NULL) {
-			g_warning("%s", error->message);
-			g_error_free(error);
-		} else
-			g_printerr("input_stream_open() failed\n");
+		if (error.IsDefined())
+			g_warning("%s", error.GetMessage());
+		else
+			g_printerr("input_stream::Open() failed\n");
 		ret = 2;
 	}
 

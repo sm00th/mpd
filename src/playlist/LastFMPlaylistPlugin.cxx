@@ -21,21 +21,35 @@
 #include "LastFMPlaylistPlugin.hxx"
 #include "PlaylistPlugin.hxx"
 #include "PlaylistRegistry.hxx"
-#include "conf.h"
-#include "song.h"
-#include "input_stream.h"
+#include "SongEnumerator.hxx"
+#include "ConfigData.hxx"
+#include "Song.hxx"
+#include "InputStream.hxx"
+#include "util/Error.hxx"
 
 #include <glib.h>
 
 #include <assert.h>
 #include <string.h>
 
-struct lastfm_playlist {
-	struct playlist_provider base;
-
+class LastfmPlaylist final : public SongEnumerator {
 	struct input_stream *is;
 
-	struct playlist_provider *xspf;
+	SongEnumerator *const xspf;
+
+public:
+	LastfmPlaylist(input_stream *_is, SongEnumerator *_xspf)
+		:is(_is), xspf(_xspf) {
+	}
+
+	virtual ~LastfmPlaylist() {
+		delete xspf;
+		is->Close();
+	}
+
+	virtual Song *NextSong() override {
+		return xspf->NextSong();
+	}
 };
 
 static struct {
@@ -44,10 +58,10 @@ static struct {
 } lastfm_config;
 
 static bool
-lastfm_init(const struct config_param *param)
+lastfm_init(const config_param &param)
 {
-	const char *user = config_get_block_string(param, "user", NULL);
-	const char *passwd = config_get_block_string(param, "password", NULL);
+	const char *user = param.GetBlockValue("user");
+	const char *passwd = param.GetBlockValue("password");
 
 	if (user == NULL || passwd == NULL) {
 		g_debug("disabling the last.fm playlist plugin "
@@ -82,39 +96,36 @@ static char *
 lastfm_get(const char *url, Mutex &mutex, Cond &cond)
 {
 	struct input_stream *input_stream;
-	GError *error = NULL;
+	Error error;
 	char buffer[4096];
-	size_t length = 0, nbytes;
+	size_t length = 0;
 
-	input_stream = input_stream_open(url, mutex, cond, &error);
+	input_stream = input_stream::Open(url, mutex, cond, error);
 	if (input_stream == NULL) {
-		if (error != NULL) {
-			g_warning("%s", error->message);
-			g_error_free(error);
-		}
+		if (error.IsDefined())
+			g_warning("%s", error.GetMessage());
 
 		return NULL;
 	}
 
 	mutex.lock();
 
-	input_stream_wait_ready(input_stream);
+	input_stream->WaitReady();
 
 	do {
-		nbytes = input_stream_read(input_stream, buffer + length,
-					   sizeof(buffer) - length, &error);
+		size_t nbytes =
+			input_stream->Read(buffer + length,
+					   sizeof(buffer) - length, error);
 		if (nbytes == 0) {
-			if (error != NULL) {
-				g_warning("%s", error->message);
-				g_error_free(error);
-			}
+			if (error.IsDefined())
+				g_warning("%s", error.GetMessage());
 
-			if (input_stream_eof(input_stream))
+			if (input_stream->IsEOF())
 				break;
 
 			/* I/O error */
 			mutex.unlock();
-			input_stream_close(input_stream);
+			input_stream->Close();
 			return NULL;
 		}
 
@@ -123,7 +134,7 @@ lastfm_get(const char *url, Mutex &mutex, Cond &cond)
 
 	mutex.unlock();
 
-	input_stream_close(input_stream);
+	input_stream->Close();
 	return g_strndup(buffer, length);
 }
 
@@ -153,11 +164,9 @@ lastfm_find(const char *response, const char *name)
 	}
 }
 
-static struct playlist_provider *
+static SongEnumerator *
 lastfm_open_uri(const char *uri, Mutex &mutex, Cond &cond)
 {
-	struct lastfm_playlist *playlist;
-	GError *error = NULL;
 	char *p, *q, *response, *session;
 
 	/* handshake */
@@ -209,11 +218,6 @@ lastfm_open_uri(const char *uri, Mutex &mutex, Cond &cond)
 		}
 	}
 
-	/* create the playlist object */
-
-	playlist = g_new(struct lastfm_playlist, 1);
-	playlist_provider_init(&playlist->base, &lastfm_playlist_plugin);
-
 	/* open the last.fm playlist */
 
 	p = g_strconcat("http://ws.audioscrobbler.com/radio/xspf.php?"
@@ -221,59 +225,41 @@ lastfm_open_uri(const char *uri, Mutex &mutex, Cond &cond)
 			NULL);
 	g_free(session);
 
-	playlist->is = input_stream_open(p, mutex, cond, &error);
+	Error error;
+	const auto is = input_stream::Open(p, mutex, cond, error);
 	g_free(p);
 
-	if (playlist->is == NULL) {
-		if (error != NULL) {
+	if (is == nullptr) {
+		if (error.IsDefined())
 			g_warning("Failed to load XSPF playlist: %s",
-				  error->message);
-			g_error_free(error);
-		} else
+				  error.GetMessage());
+		else
 			g_warning("Failed to load XSPF playlist");
-		g_free(playlist);
 		return NULL;
 	}
 
 	mutex.lock();
 
-	input_stream_wait_ready(playlist->is);
+	is->WaitReady();
 
 	/* last.fm does not send a MIME type, we have to fake it here
 	   :-( */
-	input_stream_override_mime_type(playlist->is, "application/xspf+xml");
+	is->OverrideMimeType("application/xspf+xml");
 
 	mutex.unlock();
 
 	/* parse the XSPF playlist */
 
-	playlist->xspf = playlist_list_open_stream(playlist->is, NULL);
-	if (playlist->xspf == NULL) {
-		input_stream_close(playlist->is);
-		g_free(playlist);
+	const auto xspf = playlist_list_open_stream(is, nullptr);
+	if (xspf == nullptr) {
+		is->Close();
 		g_warning("Failed to parse XSPF playlist");
 		return NULL;
 	}
 
-	return &playlist->base;
-}
+	/* create the playlist object */
 
-static void
-lastfm_close(struct playlist_provider *_playlist)
-{
-	struct lastfm_playlist *playlist = (struct lastfm_playlist *)_playlist;
-
-	playlist_plugin_close(playlist->xspf);
-	input_stream_close(playlist->is);
-	g_free(playlist);
-}
-
-static struct song *
-lastfm_read(struct playlist_provider *_playlist)
-{
-	struct lastfm_playlist *playlist = (struct lastfm_playlist *)_playlist;
-
-	return playlist_plugin_read(playlist->xspf);
+	return new LastfmPlaylist(is, xspf);
 }
 
 static const char *const lastfm_schemes[] = {
@@ -288,8 +274,6 @@ const struct playlist_plugin lastfm_playlist_plugin = {
 	lastfm_finish,
 	lastfm_open_uri,
 	nullptr,
-	lastfm_close,
-	lastfm_read,
 
 	lastfm_schemes,
 	nullptr,

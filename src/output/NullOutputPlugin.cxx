@@ -19,10 +19,8 @@
 
 #include "config.h"
 #include "NullOutputPlugin.hxx"
-#include "output_api.h"
-#include "timer.h"
-
-#include <glib.h>
+#include "OutputAPI.hxx"
+#include "Timer.hxx"
 
 #include <assert.h>
 
@@ -31,20 +29,29 @@ struct NullOutput {
 
 	bool sync;
 
-	struct timer *timer;
+	Timer *timer;
+
+	bool Initialize(const config_param &param, Error &error) {
+		return ao_base_init(&base, &null_output_plugin, param,
+				    error);
+	}
+
+	void Deinitialize() {
+		ao_base_finish(&base);
+	}
 };
 
 static struct audio_output *
-null_init(const struct config_param *param, GError **error_r)
+null_init(const config_param &param, Error &error)
 {
-	NullOutput *nd = g_new(NullOutput, 1);
+	NullOutput *nd = new NullOutput();
 
-	if (!ao_base_init(&nd->base, &null_output_plugin, param, error_r)) {
-		g_free(nd);
-		return NULL;
+	if (!nd->Initialize(param, error)) {
+		delete nd;
+		return nullptr;
 	}
 
-	nd->sync = config_get_block_bool(param, "sync", true);
+	nd->sync = param.GetBlockValue("sync", true);
 
 	return &nd->base;
 }
@@ -54,18 +61,18 @@ null_finish(struct audio_output *ao)
 {
 	NullOutput *nd = (NullOutput *)ao;
 
-	ao_base_finish(&nd->base);
-	g_free(nd);
+	nd->Deinitialize();
+	delete nd;
 }
 
 static bool
-null_open(struct audio_output *ao, struct audio_format *audio_format,
-	  G_GNUC_UNUSED GError **error)
+null_open(struct audio_output *ao, AudioFormat &audio_format,
+	  gcc_unused Error &error)
 {
 	NullOutput *nd = (NullOutput *)ao;
 
 	if (nd->sync)
-		nd->timer = timer_new(audio_format);
+		nd->timer = new Timer(audio_format);
 
 	return true;
 }
@@ -76,7 +83,7 @@ null_close(struct audio_output *ao)
 	NullOutput *nd = (NullOutput *)ao;
 
 	if (nd->sync)
-		timer_free(nd->timer);
+		delete nd->timer;
 }
 
 static unsigned
@@ -84,24 +91,24 @@ null_delay(struct audio_output *ao)
 {
 	NullOutput *nd = (NullOutput *)ao;
 
-	return nd->sync && nd->timer->started
-		? timer_delay(nd->timer)
+	return nd->sync && nd->timer->IsStarted()
+		? nd->timer->GetDelay()
 		: 0;
 }
 
 static size_t
-null_play(struct audio_output *ao, G_GNUC_UNUSED const void *chunk, size_t size,
-	  G_GNUC_UNUSED GError **error)
+null_play(struct audio_output *ao, gcc_unused const void *chunk, size_t size,
+	  gcc_unused Error &error)
 {
 	NullOutput *nd = (NullOutput *)ao;
-	struct timer *timer = nd->timer;
+	Timer *timer = nd->timer;
 
 	if (!nd->sync)
 		return size;
 
-	if (!timer->started)
-		timer_start(timer);
-	timer_add(timer, size);
+	if (!timer->IsStarted())
+		timer->Start();
+	timer->Add(size);
 
 	return size;
 }
@@ -114,7 +121,7 @@ null_cancel(struct audio_output *ao)
 	if (!nd->sync)
 		return;
 
-	timer_reset(nd->timer);
+	nd->timer->Reset();
 }
 
 const struct audio_output_plugin null_output_plugin = {

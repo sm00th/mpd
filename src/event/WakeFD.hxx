@@ -24,57 +24,12 @@
 
 #include <assert.h>
 
-/**
- * This class can be used to wake up an I/O event loop.
- *
- * For optimization purposes, this class does not have a constructor
- * or a destructor.
- */
-class WakeFD {
-	int fds[2];
-
-public:
-#ifdef NDEBUG
-	WakeFD() = default;
+#ifdef USE_EVENTFD
+#include "system/EventFD.hxx"
+#define WakeFD EventFD
 #else
-	WakeFD():fds{-1, -1} {};
+#include "system/EventPipe.hxx"
+#define WakeFD EventPipe
 #endif
-
-	WakeFD(const WakeFD &other) = delete;
-	WakeFD &operator=(const WakeFD &other) = delete;
-
-	bool Create();
-	void Destroy();
-
-	int Get() const {
-		assert(fds[0] >= 0);
-#ifndef HAVE_EVENTFD
-		assert(fds[1] >= 0);
-#endif
-
-		return fds[0];
-	}
-
-	/**
-	 * Checks if Write() was called at least once since the last
-	 * Read() call.
-	 */
-	bool Read();
-
-	/**
-	 * Wakes up the reader.  Multiple calls to this function will
-	 * be combined to one wakeup.
-	 */
-	void Write();
-
-private:
-#ifdef HAVE_EVENTFD
-	bool IsEventFD() {
-		assert(fds[0] >= 0);
-
-		return fds[1] == -2;
-	}
-#endif
-};
 
 #endif /* MAIN_NOTIFY_H */

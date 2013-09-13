@@ -23,7 +23,7 @@
 #include "replay_gain_info.h"
 
 #ifndef NDEBUG
-#include "audio_format.h"
+#include "AudioFormat.hxx"
 #endif
 
 #include <stdint.h>
@@ -33,7 +33,8 @@ enum {
 	CHUNK_SIZE = 4096,
 };
 
-struct audio_format;
+struct AudioFormat;
+struct Tag;
 
 /**
  * A chunk of music data.  Its format is defined by the
@@ -70,7 +71,7 @@ struct music_chunk {
 	 * object is owned by this chunk, and must be freed when this
 	 * chunk is deinitialized in music_chunk_free()
 	 */
-	struct tag *tag;
+	Tag *tag;
 
 	/**
 	 * Replay gain information associated with this chunk.
@@ -89,7 +90,7 @@ struct music_chunk {
 	char data[CHUNK_SIZE];
 
 #ifndef NDEBUG
-	struct audio_format audio_format;
+	AudioFormat audio_format;
 #endif
 
 	music_chunk()
@@ -110,7 +111,7 @@ struct music_chunk {
 	 * specified audio_format.
 	 */
 	gcc_pure
-	bool CheckFormat(const struct audio_format &audio_format) const;
+	bool CheckFormat(AudioFormat audio_format) const;
 #endif
 
 	/**
@@ -127,7 +128,7 @@ struct music_chunk {
 	 * here
 	 * @return a writable buffer, or NULL if the chunk is full
 	 */
-	void *Write(const struct audio_format &af,
+	void *Write(AudioFormat af,
 		    float data_time, uint16_t bit_rate,
 		    size_t *max_length_r);
 
@@ -141,7 +142,7 @@ struct music_chunk {
 	 * @param length the number of bytes which were appended
 	 * @return true if the chunk is full
 	 */
-	bool Expand(const struct audio_format &af, size_t length);
+	bool Expand(AudioFormat af, size_t length);
 };
 
 void

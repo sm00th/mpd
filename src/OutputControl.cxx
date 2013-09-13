@@ -20,17 +20,14 @@
 #include "config.h"
 #include "OutputControl.hxx"
 #include "OutputThread.hxx"
-#include "output_api.h"
-
-extern "C" {
-#include "output_internal.h"
-#include "mixer_control.h"
-#include "mixer_plugin.h"
-}
-
+#include "OutputInternal.hxx"
+#include "OutputPlugin.hxx"
+#include "MixerPlugin.hxx"
+#include "MixerControl.hxx"
 #include "notify.hxx"
 #include "filter/ReplayGainFilterPlugin.hxx"
 #include "FilterPlugin.hxx"
+#include "util/Error.hxx"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -51,9 +48,9 @@ struct notify audio_output_client_notify;
 static void ao_command_wait(struct audio_output *ao)
 {
 	while (ao->command != AO_COMMAND_NONE) {
-		g_mutex_unlock(ao->mutex);
+		ao->mutex.unlock();
 		audio_output_client_notify.Wait();
-		g_mutex_lock(ao->mutex);
+		ao->mutex.lock();
 	}
 }
 
@@ -68,7 +65,7 @@ static void ao_command_async(struct audio_output *ao,
 {
 	assert(ao->command == AO_COMMAND_NONE);
 	ao->command = cmd;
-	g_cond_signal(ao->cond);
+	ao->cond.signal();
 }
 
 /**
@@ -91,9 +88,8 @@ ao_command(struct audio_output *ao, enum audio_output_command cmd)
 static void
 ao_lock_command(struct audio_output *ao, enum audio_output_command cmd)
 {
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
 	ao_command(ao, cmd);
-	g_mutex_unlock(ao->mutex);
 }
 
 void
@@ -144,14 +140,14 @@ audio_output_disable(struct audio_output *ao)
  */
 static bool
 audio_output_open(struct audio_output *ao,
-		  const struct audio_format *audio_format,
+		  const AudioFormat audio_format,
 		  const struct music_pipe *mp)
 {
 	bool open;
 
 	assert(ao != NULL);
 	assert(ao->allow_play);
-	assert(audio_format_valid(audio_format));
+	assert(audio_format.IsValid());
 	assert(mp != NULL);
 
 	if (ao->fail_timer != NULL) {
@@ -159,8 +155,7 @@ audio_output_open(struct audio_output *ao,
 		ao->fail_timer = NULL;
 	}
 
-	if (ao->open &&
-	    audio_format_equals(audio_format, &ao->in_audio_format)) {
+	if (ao->open && audio_format == ao->in_audio_format) {
 		assert(ao->pipe == mp ||
 		       (ao->always_on && ao->pause));
 
@@ -181,7 +176,7 @@ audio_output_open(struct audio_output *ao,
 		return true;
 	}
 
-	ao->in_audio_format = *audio_format;
+	ao->in_audio_format = audio_format;
 	ao->chunk = NULL;
 
 	ao->pipe = mp;
@@ -193,13 +188,10 @@ audio_output_open(struct audio_output *ao,
 	open = ao->open;
 
 	if (open && ao->mixer != NULL) {
-		GError *error = NULL;
-
-		if (!mixer_open(ao->mixer, &error)) {
+		Error error;
+		if (!mixer_open(ao->mixer, error))
 			g_warning("Failed to open mixer for '%s': %s",
-				  ao->name, error->message);
-			g_error_free(error);
-		}
+				  ao->name, error.GetMessage());
 	}
 
 	return open;
@@ -230,38 +222,33 @@ audio_output_close_locked(struct audio_output *ao)
 
 bool
 audio_output_update(struct audio_output *ao,
-		    const struct audio_format *audio_format,
+		    const AudioFormat audio_format,
 		    const struct music_pipe *mp)
 {
 	assert(mp != NULL);
 
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
 
 	if (ao->enabled && ao->really_enabled) {
 		if (ao->fail_timer == NULL ||
 		    g_timer_elapsed(ao->fail_timer, NULL) > REOPEN_AFTER) {
-			bool success = audio_output_open(ao, audio_format, mp);
-			g_mutex_unlock(ao->mutex);
-			return success;
+			return audio_output_open(ao, audio_format, mp);
 		}
 	} else if (audio_output_is_open(ao))
 		audio_output_close_locked(ao);
 
-	g_mutex_unlock(ao->mutex);
 	return false;
 }
 
 void
 audio_output_play(struct audio_output *ao)
 {
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
 
 	assert(ao->allow_play);
 
 	if (audio_output_is_open(ao))
-		g_cond_signal(ao->cond);
-
-	g_mutex_unlock(ao->mutex);
+		ao->cond.signal();
 }
 
 void audio_output_pause(struct audio_output *ao)
@@ -272,45 +259,41 @@ void audio_output_pause(struct audio_output *ao)
 		   mixer_auto_close()) */
 		mixer_auto_close(ao->mixer);
 
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
+
 	assert(ao->allow_play);
 	if (audio_output_is_open(ao))
 		ao_command_async(ao, AO_COMMAND_PAUSE);
-	g_mutex_unlock(ao->mutex);
 }
 
 void
 audio_output_drain_async(struct audio_output *ao)
 {
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
+
 	assert(ao->allow_play);
 	if (audio_output_is_open(ao))
 		ao_command_async(ao, AO_COMMAND_DRAIN);
-	g_mutex_unlock(ao->mutex);
 }
 
 void audio_output_cancel(struct audio_output *ao)
 {
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
 
 	if (audio_output_is_open(ao)) {
 		ao->allow_play = false;
 		ao_command_async(ao, AO_COMMAND_CANCEL);
 	}
-
-	g_mutex_unlock(ao->mutex);
 }
 
 void
 audio_output_allow_play(struct audio_output *ao)
 {
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
 
 	ao->allow_play = true;
 	if (audio_output_is_open(ao))
-		g_cond_signal(ao->cond);
-
-	g_mutex_unlock(ao->mutex);
+		ao->cond.signal();
 }
 
 void
@@ -327,9 +310,8 @@ void audio_output_close(struct audio_output *ao)
 	assert(ao != NULL);
 	assert(!ao->open || ao->fail_timer == NULL);
 
-	g_mutex_lock(ao->mutex);
+	const ScopeLock protect(ao->mutex);
 	audio_output_close_locked(ao);
-	g_mutex_unlock(ao->mutex);
 }
 
 void audio_output_finish(struct audio_output *ao)
