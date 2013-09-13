@@ -33,30 +33,9 @@
 #include <string.h>
 
 static struct {
-	char *apikey;
-	char *token;
+  char *apikey;
+  char *token;
 } et_config;
-
-static bool
-etracks_init(const config_param &param)
-{
-	et_config.apikey = param.DupBlockString("apikey");
-	if (et_config.apikey == NULL) {
-		g_debug("disabling the 8tracks playlist plugin "
-			"because API key is not set");
-		return false;
-	}
-  return true;
-}
-
-static void
-etracks_finish(void)
-{
-  g_free(et_config.apikey);
-  if (et_config.token != NULL) {
-    g_free(et_config.token);
-  }
-}
 
 enum et_key {
   KEY_PLAYTOKEN,
@@ -76,21 +55,21 @@ enum et_lvls {
 };
 
 static const char* et_keystr[] = {
-	"play_token",
-	"name",
-	"performer",
-	"url",
+  "play_token",
+  "name",
+  "performer",
+  "url",
   "play_duration",
   "at_end",
   "id",
   "mix",
-	NULL,
+  NULL,
 };
 
 struct parse_data {
-	int key;
-	int lvl;
-	int sublvl;
+  int key;
+  int lvl;
+  int sublvl;
   char *title;
   char *artist;
   char *url;
@@ -101,66 +80,66 @@ struct parse_data {
 
 static int handle_string(void *ctx, const unsigned char* stringval,
 #ifdef HAVE_YAJL1
-			 unsigned int
+       unsigned int
 #else
-			 size_t
+       size_t
 #endif
-			 stringlen)
+       stringlen)
 {
-	struct parse_data *data = (struct parse_data *) ctx;
+  struct parse_data *data = (struct parse_data *) ctx;
 
-	switch (data->key) {
-	case KEY_PLAYTOKEN:
-		if (et_config.token != NULL)
-			g_free(et_config.token);
-		et_config.token = g_strndup((const gchar*)stringval, stringlen);
-		break;
+  switch (data->key) {
+  case KEY_PLAYTOKEN:
+    if (et_config.token != NULL)
+      g_free(et_config.token);
+    et_config.token = g_strndup((const gchar*)stringval, stringlen);
+    break;
   case KEY_NAME:
-		if (data->title != NULL)
-			g_free(data->title);
-		data->title = g_strndup((const gchar*)stringval, stringlen);
-		break;
+    if (data->title != NULL)
+      g_free(data->title);
+    data->title = g_strndup((const gchar*)stringval, stringlen);
+    break;
   case KEY_PERFORMER:
-		if (data->artist != NULL)
-			g_free(data->artist);
-		data->artist = g_strndup((const gchar*)stringval, stringlen);
-		break;
+    if (data->artist != NULL)
+      g_free(data->artist);
+    data->artist = g_strndup((const gchar*)stringval, stringlen);
+    break;
   case KEY_URL:
-		if (data->url != NULL)
-			g_free(data->url);
-		data->url = g_strndup((const gchar*)stringval, stringlen);
-		break;
-	default:
-		break;
-	}
+    if (data->url != NULL)
+      g_free(data->url);
+    data->url = g_strndup((const gchar*)stringval, stringlen);
+    break;
+  default:
+    break;
+  }
 
-	return 1;
+  return 1;
 }
 
 static int handle_boolean(void *ctx, int boolval)
 {
-	struct parse_data *data = (struct parse_data *) ctx;
-	switch (data->key) {
-	case KEY_MIXEND:
+  struct parse_data *data = (struct parse_data *) ctx;
+  switch (data->key) {
+  case KEY_MIXEND:
     data->mixend = boolval;
     break;
   default:
     break;
   }
 
-	return 1;
+  return 1;
 }
 
 static int handle_integer(void *ctx,
-			  long
+        long
 #ifndef HAVE_YAJL1
-			  long
+        long
 #endif
-			  intval)
+        intval)
 {
-	struct parse_data *data = (struct parse_data *) ctx;
-	switch (data->key) {
-	case KEY_DURATION:
+  struct parse_data *data = (struct parse_data *) ctx;
+  switch (data->key) {
+  case KEY_DURATION:
     data->duration = intval;
     break;
   case KEY_ID:
@@ -169,43 +148,43 @@ static int handle_integer(void *ctx,
         g_free(data->mixid);
       data->mixid = g_strdup_printf("%lld", intval);
     }
-		break;
+    break;
   default:
     break;
   }
 
-	return 1;
+  return 1;
 }
 
 static int handle_mapkey(void *ctx, const unsigned char* stringval,
 #ifdef HAVE_YAJL1
-			 unsigned int
+       unsigned int
 #else
-			 size_t
+       size_t
 #endif
-			 stringlen)
+       stringlen)
 {
-	struct parse_data *data = (struct parse_data *) ctx;
+  struct parse_data *data = (struct parse_data *) ctx;
 
-	int i;
-	data->key = KEY_OTHER;
+  int i;
+  data->key = KEY_OTHER;
 
-	for (i = 0; i < KEY_OTHER; ++i) {
-		if (strncmp((const char *)stringval, et_keystr[i], stringlen) == 0) {
-			data->key = i;
-			break;
-		}
-	}
+  for (i = 0; i < KEY_OTHER; ++i) {
+    if (strncmp((const char *)stringval, et_keystr[i], stringlen) == 0) {
+      data->key = i;
+      break;
+    }
+  }
 
-	return 1;
+  return 1;
 }
 
 static int handle_start_map(void *ctx)
 {
-	struct parse_data *data = (struct parse_data *) ctx;
+  struct parse_data *data = (struct parse_data *) ctx;
 
-	switch (data->key) {
-	case KEY_MIX:
+  switch (data->key) {
+  case KEY_MIX:
     data->lvl = LVL_MIX;
     data->sublvl = 1;
     break;
@@ -214,12 +193,12 @@ static int handle_start_map(void *ctx)
     break;
   }
 
-	return 1;
+  return 1;
 }
 
 static int handle_end_map(void *ctx)
 {
-	struct parse_data *data = (struct parse_data *) ctx;
+  struct parse_data *data = (struct parse_data *) ctx;
 
   // Assuming that lvls we are interested in will never overlap
   if (data->sublvl > 0) {
@@ -228,21 +207,21 @@ static int handle_end_map(void *ctx)
     }
   }
 
-	return 1;
+  return 1;
 }
 
 static yajl_callbacks parse_callbacks = {
-	NULL,
-	handle_boolean,
-	handle_integer,
-	NULL,
-	NULL,
-	handle_string,
-	handle_start_map,
-	handle_mapkey,
-	handle_end_map,
-	NULL,
-	NULL,
+  NULL,
+  handle_boolean,
+  handle_integer,
+  NULL,
+  NULL,
+  handle_string,
+  handle_start_map,
+  handle_mapkey,
+  handle_end_map,
+  NULL,
+  NULL,
 };
 
 static int etracks_parse_url(const char* uri, Mutex &mutex, Cond &cond,
@@ -251,65 +230,65 @@ static int etracks_parse_url(const char* uri, Mutex &mutex, Cond &cond,
   yajl_handle hand;
 
 #ifdef HAVE_YAJL1
-	hand = yajl_alloc(&parse_callbacks, NULL, NULL, (void *) &data);
+  hand = yajl_alloc(&parse_callbacks, NULL, NULL, (void *) &data);
 #else
-	hand = yajl_alloc(&parse_callbacks, NULL, (void *) &data);
+  hand = yajl_alloc(&parse_callbacks, NULL, (void *) &data);
 #endif
 
   Error error;
   input_stream *input_stream = input_stream::Open(uri, mutex, cond,
     error);
-	if (input_stream == NULL) {
-		if (error.IsDefined())
-			g_warning("%s", error.GetMessage());
-		return -1;
-	}
-	mutex.lock();
-	input_stream->WaitReady();
+  if (input_stream == NULL) {
+    if (error.IsDefined())
+      g_warning("%s", error.GetMessage());
+    return -1;
+  }
+  mutex.lock();
+  input_stream->WaitReady();
 
-	yajl_status stat;
-	int done = 0;
+  yajl_status stat;
+  int done = 0;
 
-	char buffer[4096];
-	unsigned char *ubuffer = (unsigned char *)buffer;
-	while (!done) {
-		const size_t nbytes =
-			input_stream->Read(buffer, sizeof(buffer), error);
-		if (nbytes == 0) {
-			if (error.IsDefined())
-				g_warning("%s", error.GetMessage());
+  char buffer[4096];
+  unsigned char *ubuffer = (unsigned char *)buffer;
+  while (!done) {
+    const size_t nbytes =
+      input_stream->Read(buffer, sizeof(buffer), error);
+    if (nbytes == 0) {
+      if (error.IsDefined())
+        g_warning("%s", error.GetMessage());
 
-			if (input_stream->IsEOF()) {
-				done = true;
-			} else {
-				mutex.unlock();
-				input_stream->Close();
-				return -1;
-			}
-		}
-		if (done) {
+      if (input_stream->IsEOF()) {
+        done = true;
+      } else {
+        mutex.unlock();
+        input_stream->Close();
+        return -1;
+      }
+    }
+    if (done) {
 #ifdef HAVE_YAJL1
-			stat = yajl_parse_complete(hand);
+      stat = yajl_parse_complete(hand);
 #else
-			stat = yajl_complete_parse(hand);
+      stat = yajl_complete_parse(hand);
 #endif
-		} else
-			stat = yajl_parse(hand, ubuffer, nbytes);
+    } else
+      stat = yajl_parse(hand, ubuffer, nbytes);
 
-		if (stat != yajl_status_ok
+    if (stat != yajl_status_ok
 #ifdef HAVE_YAJL1
-		    && stat != yajl_status_insufficient_data
+        && stat != yajl_status_insufficient_data
 #endif
-		    )
-		{
-			unsigned char *str = yajl_get_error(hand, 1, ubuffer, nbytes);
-			yajl_free_error(hand, str);
-			break;
-		}
-	}
+        )
+    {
+      unsigned char *str = yajl_get_error(hand, 1, ubuffer, nbytes);
+      yajl_free_error(hand, str);
+      break;
+    }
+  }
 
-	mutex.unlock();
-	input_stream->Close();
+  mutex.unlock();
+  input_stream->Close();
 
   return 0;
 }
@@ -353,33 +332,35 @@ etracks_open_uri(const char *uri, Mutex &mutex, Cond &cond)
   if (et_config.token == NULL) {
     char *tokenurl = g_strconcat("http://8tracks.com/sets/new.json?api_key=",
         et_config.apikey, NULL);
-    if (etracks_parse_url(tokenurl, mutex, cond, data) < 0) {
+    etracks_parse_url(tokenurl, mutex, cond, data);
+    if (et_config.token == NULL) {
+      g_warning("Failed to get playtoken");
       return NULL;
     }
   }
 
-	char *s, *p;
-	char *arg, *rest;
+  char *s, *p;
+  char *arg, *rest;
   char *mixid = NULL;
-	s = g_strdup(uri);
-	for (p = s; *p; p++) {
-		if (*p == ':' && *(p+1) == '/' && *(p+2) == '/') {
-			*p = 0;
-			p += 3;
-			break;
-		}
-	}
-	arg = p;
-	for (; *p; p++) {
-		if (*p == '/') {
-			*p = 0;
-			p++;
-			break;
-		}
-	}
-	rest = p;
+  s = g_strdup(uri);
+  for (p = s; *p; p++) {
+    if (*p == ':' && *(p+1) == '/' && *(p+2) == '/') {
+      *p = 0;
+      p += 3;
+      break;
+    }
+  }
+  arg = p;
+  for (; *p; p++) {
+    if (*p == '/') {
+      *p = 0;
+      p++;
+      break;
+    }
+  }
+  rest = p;
 
-	if (strcmp(arg, "mix") == 0) {
+  if (strcmp(arg, "mix") == 0) {
     mixid = rest;
   } else {
     char *mixinfourl = g_strconcat("http://8tracks.com/", arg, "/", rest,
@@ -410,28 +391,48 @@ etracks_open_uri(const char *uri, Mutex &mutex, Cond &cond)
   } else {
     g_warning("Failed to parse uri: %s", uri);
   }
-	g_free(s);
+  g_free(s);
 
   songs.reverse();
   return new MemorySongEnumerator(std::move(songs));
 }
 
+static bool
+etracks_init(const config_param &param)
+{
+  et_config.apikey = param.DupBlockString("apikey");
+  if (et_config.apikey == NULL) {
+    g_debug("disabling the 8tracks playlist plugin "
+      "because API key is not set");
+    return false;
+  }
+  et_config.token = NULL;
+  return true;
+}
+
+static void
+etracks_finish(void)
+{
+  g_free(et_config.apikey);
+  if (et_config.token != NULL) {
+    g_free(et_config.token);
+  }
+}
+
 static const char *const etracks_schemes[] = {
-	"etracks",
-	NULL
+  "etracks",
+  NULL
 };
 
 const struct playlist_plugin eighttracks_playlist_plugin = {
-	"etracks",
+  "etracks",
 
-	etracks_init,
-	etracks_finish,
-	etracks_open_uri,
-	nullptr,
+  etracks_init,
+  etracks_finish,
+  etracks_open_uri,
+  nullptr,
 
-	etracks_schemes,
-	nullptr,
-	nullptr,
+  etracks_schemes,
+  nullptr,
+  nullptr,
 };
-
-
