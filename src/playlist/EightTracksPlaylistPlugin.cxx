@@ -289,6 +289,7 @@ static int etracks_parse_url(const char* uri, Mutex &mutex, Cond &cond,
 
   mutex.unlock();
   input_stream->Close();
+	yajl_free(hand);
 
   return 0;
 }
@@ -312,6 +313,7 @@ static void etracks_parse_data(struct parse_data &data,
     }
     song->tag = t;
     songs.emplace_front(song);
+
     g_free(data.url);
     data.url = NULL;
   }
@@ -333,6 +335,8 @@ etracks_open_uri(const char *uri, Mutex &mutex, Cond &cond)
     char *tokenurl = g_strconcat("http://8tracks.com/sets/new.json?api_key=",
         et_config.apikey, NULL);
     etracks_parse_url(tokenurl, mutex, cond, data);
+    g_free(tokenurl);
+
     if (et_config.token == NULL) {
       g_warning("Failed to get playtoken");
       return NULL;
@@ -367,6 +371,7 @@ etracks_open_uri(const char *uri, Mutex &mutex, Cond &cond)
         ".json?api_key=", et_config.apikey, NULL);
     etracks_parse_url(mixinfourl, mutex, cond, data);
     mixid = data.mixid;
+    g_free(mixinfourl);
   }
 
   std::forward_list<SongPointer> songs;
@@ -378,6 +383,7 @@ etracks_open_uri(const char *uri, Mutex &mutex, Cond &cond)
     int result = etracks_parse_url(mixurl, mutex, cond, data);
     g_free(mixurl);
     etracks_parse_data(data, songs);
+
     while (data.mixend == false && result == 0) {
       mixurl = g_strconcat("http://8tracks.com/sets/", et_config.token,
           "/next.json?mix_id=", mixid, "&api_key=", et_config.apikey, NULL);
