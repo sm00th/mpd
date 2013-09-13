@@ -375,13 +375,13 @@ etracks_open_uri(const char *uri, Mutex &mutex, Cond &cond)
     char *mixurl = g_strconcat("http://8tracks.com/sets/", et_config.token,
         "/play.json?mix_id=", mixid, "&api_key=", et_config.apikey, NULL);
 
-    etracks_parse_url(mixurl, mutex, cond, data);
+    int result = etracks_parse_url(mixurl, mutex, cond, data);
     g_free(mixurl);
     etracks_parse_data(data, songs);
-    while (data.mixend == false) {
+    while (data.mixend == false && result == 0) {
       mixurl = g_strconcat("http://8tracks.com/sets/", et_config.token,
           "/next.json?mix_id=", mixid, "&api_key=", et_config.apikey, NULL);
-      etracks_parse_url(mixurl, mutex, cond, data);
+      result = etracks_parse_url(mixurl, mutex, cond, data);
       etracks_parse_data(data, songs);
       g_free(mixurl);
     }
