@@ -300,7 +300,7 @@ static void etracks_parse_data(struct parse_data &data,
   if (data.url != NULL) {
     Song *song = Song::NewRemote(data.url);
     Tag *t = new Tag();
-    t->time = data.duration / 1000;
+    t->time = data.duration;
     if (data.title != NULL) {
       t->AddItem(TAG_TITLE, data.title);
       g_free(data.title);
