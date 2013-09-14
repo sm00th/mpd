@@ -18,7 +18,7 @@
  */
 
 #include "config.h"
-#include "rpi_output_plugin.h"
+#include "RpiOutputPlugin.hxx"
 #include "OutputAPI.hxx"
 
 #include <glib.h>
@@ -421,12 +421,19 @@ rpi_cancel(G_GNUC_UNUSED struct audio_output *ao)
 }
 
 const struct audio_output_plugin rpi_output_plugin = {
-	.name = "rpi",
-	.init = rpi_init,
-	.finish = rpi_finish,
-	.open = rpi_open,
-	.close = rpi_close,
-	.delay = rpi_delay,
-	.play = rpi_play,
-	.cancel = rpi_cancel,
+	"rpi",
+	nullptr,
+	rpi_init,
+	rpi_finish,
+	nullptr,
+	nullptr,
+	rpi_open,
+	rpi_close,
+	rpi_delay,
+	nullptr,
+	rpi_play,
+	nullptr,
+	rpi_cancel,
+	nullptr,
+	nullptr,
 };

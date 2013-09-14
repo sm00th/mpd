@@ -875,7 +875,7 @@ endif
 
 if HAVE_RPI
 liboutput_plugins_a_SOURCES += \
-	src/output/rpi_output_plugin.c src/output/rpi_output_plugin.h
+	src/output/RpiOutputPlugin.cxx src/output/RpiOutputPlugin.hxx
 endif
 
 if HAVE_OSX
