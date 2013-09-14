@@ -1359,7 +1359,7 @@ if test x$enable_rpi = xyes; then
 	#if test x$enable_osx = xyes; then
 		AC_CHECK_HEADERS([bcm_host.h IL/OMX_Types.h IL/OMX_Core.h IL/OMX_Broadcom.h], [], [enable_rpi=no])
 		if test x$enable_rpi = xyes; then
-			RPI_CFLAGS="-fgnu89-inline"
+			RPI_CFLAGS=""
 			RPI_LIBS="-lopenmaxil -lbcm_host"
 			AC_DEFINE(HAVE_RPI, 1, [Define for RPi support])
 		else

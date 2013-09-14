@@ -59,7 +59,7 @@ static OMX_ERRORTYPE rpi_event_handler_callback(
 		G_GNUC_UNUSED OMX_EVENTTYPE eEvent, G_GNUC_UNUSED OMX_U32 nData1,
 		G_GNUC_UNUSED OMX_U32 nData2, G_GNUC_UNUSED OMX_PTR pEventData)
 {
-	return 0;
+	return OMX_ErrorNone;
 }
 
 static OMX_ERRORTYPE rpi_empty_buffer_done_callback(
@@ -71,14 +71,14 @@ static OMX_ERRORTYPE rpi_empty_buffer_done_callback(
 	od->input_buffers_avail = g_list_append(od->input_buffers_avail, pBuffer);
 	od->num_buffers_avail++;
 	g_mutex_unlock(&od->buffer_lock);
-	return 0;
+	return OMX_ErrorNone;
 }
 
 static OMX_ERRORTYPE rpi_fill_buffer_done_callback(
 		G_GNUC_UNUSED OMX_HANDLETYPE hComponent, G_GNUC_UNUSED OMX_PTR pAppData,
 		G_GNUC_UNUSED OMX_BUFFERHEADERTYPE* pBuffer)
 {
-	return 0;
+	return OMX_ErrorNone;
 }
 
 static bool m_get_handle(OMX_HANDLETYPE *handle, OMX_STRING name,
@@ -94,7 +94,7 @@ static bool m_get_handle(OMX_HANDLETYPE *handle, OMX_STRING name,
 	return true;
 }
 
-static bool m_get_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+static bool m_get_param(OMX_HANDLETYPE handle, OMX_INDEXTYPE idx,
 		OMX_PTR param)
 {
 	OMX_ERRORTYPE omx_err;
@@ -108,7 +108,7 @@ static bool m_get_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
 	return true;
 }
 
-static bool m_set_param(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+static bool m_set_param(OMX_HANDLETYPE handle, OMX_INDEXTYPE idx,
 		OMX_PTR param)
 {
 	OMX_ERRORTYPE omx_err;
@@ -137,7 +137,7 @@ static bool m_get_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
 }
 */
 
-static bool m_set_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+static bool m_set_config(OMX_HANDLETYPE handle, OMX_INDEXTYPE idx,
 		OMX_PTR cfg)
 {
 	OMX_ERRORTYPE omx_err;
@@ -150,7 +150,7 @@ static bool m_set_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
 	return true;
 }
 
-static bool m_send_cmd(OMX_HANDLETYPE *handle, OMX_COMMANDTYPE cmd,
+static bool m_send_cmd(OMX_HANDLETYPE handle, OMX_COMMANDTYPE cmd,
 		OMX_U32 param)
 {
 	OMX_ERRORTYPE omx_err;
@@ -165,12 +165,12 @@ static bool m_send_cmd(OMX_HANDLETYPE *handle, OMX_COMMANDTYPE cmd,
 }
 
 static struct audio_output *
-rpi_init(const struct config_param *param, GError **error_r)
+rpi_init(const config_param &param, Error &error_r)
 {
 	struct rpi_data *od;
 
 	od = g_new(struct rpi_data, 1);
-	od->device_name = config_get_block_string(param, "device", "local");
+	od->device_name = param.GetBlockValue("device");
 	od->input_buffer_list = g_list_alloc();
 	od->input_buffers_avail = g_list_alloc();
 	od->num_buffers_avail = 0;
@@ -198,8 +198,8 @@ rpi_finish(struct audio_output *ao)
 }
 
 static bool
-rpi_open(struct audio_output *ao, struct audio_format *audio_format,
-	    G_GNUC_UNUSED GError **error)
+rpi_open(struct audio_output *ao, AudioFormat &audio_format,
+	    G_GNUC_UNUSED Error &error)
 {
 	struct rpi_data *od = (struct rpi_data *)ao;
 	uint8_t i, j;
@@ -208,10 +208,10 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	int buffer_size;
 	uint8_t bitrate = 16;
 
-	if (audio_format->format == SAMPLE_FORMAT_S8) /* only 8/16 are supported */
+	if (audio_format.format == SampleFormat::S8) /* only 8/16 are supported */
 		bitrate = 8;
-	
-	buffer_size = (BUFFER_SIZE_SAMPLES * bitrate * audio_format->channels) >> 3;
+
+	buffer_size = (BUFFER_SIZE_SAMPLES * bitrate * audio_format.channels) >> 3;
 
 	OMX_INDEXTYPE types[] = {OMX_IndexParamAudioInit, OMX_IndexParamVideoInit,
 		OMX_IndexParamImageInit, OMX_IndexParamOtherInit};
@@ -269,8 +269,8 @@ rpi_open(struct audio_output *ao, struct audio_format *audio_format,
 	pcm.eEndian            = OMX_EndianLittle;
 	pcm.bInterleaved       = OMX_TRUE;
 	pcm.ePCMMode           = OMX_AUDIO_PCMModeLinear;
-	pcm.nChannels          = audio_format->channels;
-	pcm.nSamplingRate      = audio_format->sample_rate;
+	pcm.nChannels          = audio_format.channels;
+	pcm.nSamplingRate      = audio_format.sample_rate;
 	pcm.nBitPerSample      = bitrate;
 	pcm.eChannelMapping[0] = OMX_AUDIO_ChannelLF;
 	pcm.eChannelMapping[1] = OMX_AUDIO_ChannelRF;
@@ -343,7 +343,7 @@ rpi_close(struct audio_output *ao)
 		OMX_BUFFERHEADERTYPE *omx_buffer = NULL;
 
 		list_ptr = g_list_last(od->input_buffer_list);
-		omx_buffer = list_ptr->data;
+		omx_buffer = static_cast<OMX_BUFFERHEADERTYPE *>(list_ptr->data);
 		od->input_buffer_list = g_list_remove(od->input_buffer_list, omx_buffer);
 		od->input_buffers_avail = g_list_remove(od->input_buffers_avail,
 				omx_buffer);
@@ -369,14 +369,14 @@ rpi_delay(struct audio_output *ao)
 
 static size_t
 rpi_play(struct audio_output *ao, const void *chunk, size_t size,
-	    G_GNUC_UNUSED GError **error)
+	    G_GNUC_UNUSED Error &error)
 {
 	struct rpi_data *od = (struct rpi_data *)ao;
 	OMX_ERRORTYPE omx_err;
 	OMX_BUFFERHEADERTYPE *omx_buffer = NULL;
 
 	unsigned int demuxer_bytes = (unsigned int)size;
-	const uint8_t *demuxer_content = chunk;
+	const uint8_t *demuxer_content = static_cast<const uint8_t *>(chunk);
 
 	while(demuxer_bytes) {
 		omx_buffer =

@@ -27,7 +27,7 @@
 #include "output/JackOutputPlugin.hxx"
 #include "output/NullOutputPlugin.hxx"
 #include "output/OpenALOutputPlugin.hxx"
-#include "output/rpi_output_plugin.h"
+#include "output/RpiOutputPlugin.hxx"
 #include "output/OssOutputPlugin.hxx"
 #include "output/OSXOutputPlugin.hxx"
 #include "output/PipeOutputPlugin.hxx"
