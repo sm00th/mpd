@@ -42,16 +42,25 @@
   (a).nVersion.s.nRevision = OMX_VERSION_REVISION; \
   (a).nVersion.s.nStep = OMX_VERSION_STEP
 
-struct rpi_data {
+struct RpiOutput {
 	struct audio_output base;
 
-	const char*    device_name;
+	const char *device_name;
 	OMX_HANDLETYPE m_render;
 	unsigned int   m_input_port;
 	GMutex         buffer_lock;
 	GList*         input_buffer_list;
 	GList*         input_buffers_avail;
 	uint8_t        num_buffers_avail;
+
+	bool Initialize(const config_param &param, Error &error_r) {
+		return ao_base_init(&base, &rpi_output_plugin, param,
+				    error_r);
+	}
+
+	void Deinitialize() {
+		ao_base_finish(&base);
+	}
 };
 
 static OMX_ERRORTYPE rpi_event_handler_callback(
@@ -66,7 +75,7 @@ static OMX_ERRORTYPE rpi_empty_buffer_done_callback(
 		G_GNUC_UNUSED OMX_HANDLETYPE hComponent,
 		OMX_PTR pAppData, OMX_BUFFERHEADERTYPE* pBuffer)
 {
-	struct rpi_data *od = (struct rpi_data *)pAppData;
+	RpiOutput *od = (RpiOutput *)pAppData;
 	g_mutex_lock(&od->buffer_lock);
 	od->input_buffers_avail = g_list_append(od->input_buffers_avail, pBuffer);
 	od->num_buffers_avail++;
@@ -123,7 +132,7 @@ static bool m_set_param(OMX_HANDLETYPE handle, OMX_INDEXTYPE idx,
 }
 
 /* Unused for now
-static bool m_get_config(OMX_HANDLETYPE *handle, OMX_INDEXTYPE idx,
+static bool m_get_config(OMX_HANDLETYPE handle, OMX_INDEXTYPE idx,
 		OMX_PTR cfg)
 {
 	OMX_ERRORTYPE omx_err;
@@ -165,20 +174,18 @@ static bool m_send_cmd(OMX_HANDLETYPE handle, OMX_COMMANDTYPE cmd,
 }
 
 static struct audio_output *
-rpi_init(const config_param &param, Error &error_r)
+rpi_init(const config_param &param, Error &error)
 {
-	struct rpi_data *od;
-
-	od = g_new(struct rpi_data, 1);
+	RpiOutput *od = new RpiOutput();
 	od->device_name = param.GetBlockValue("device");
 	od->input_buffer_list = g_list_alloc();
 	od->input_buffers_avail = g_list_alloc();
 	od->num_buffers_avail = 0;
 	g_mutex_init(&od->buffer_lock);
 
-	if (!ao_base_init(&od->base, &rpi_output_plugin, param, error_r)) {
-		g_free(od);
-		return NULL;
+	if (!od->Initialize(param, error)) {
+		delete od;
+		return nullptr;
 	}
 
 	return &od->base;
@@ -187,21 +194,21 @@ rpi_init(const config_param &param, Error &error_r)
 static void
 rpi_finish(struct audio_output *ao)
 {
-	struct rpi_data *od = (struct rpi_data *)ao;
+	RpiOutput *od = (RpiOutput *)ao;
 
-	ao_base_finish(&od->base);
+	od->Deinitialize();
 
 	g_list_free(od->input_buffer_list);
 	g_list_free(od->input_buffers_avail);
 	g_mutex_clear(&od->buffer_lock);
-	g_free(od);
+	delete od;
 }
 
 static bool
 rpi_open(struct audio_output *ao, AudioFormat &audio_format,
 	    G_GNUC_UNUSED Error &error)
 {
-	struct rpi_data *od = (struct rpi_data *)ao;
+	RpiOutput *od = (RpiOutput *)ao;
 	uint8_t i, j;
 	char render[] = "OMX.broadcom.audio_render";
 	int buffers = 10;
@@ -319,7 +326,7 @@ rpi_open(struct audio_output *ao, AudioFormat &audio_format,
 static void
 rpi_close(struct audio_output *ao)
 {
-	struct rpi_data *od = (struct rpi_data *)ao;
+	RpiOutput *od = (RpiOutput *)ao;
 	GList *list_ptr = NULL;
 	OMX_PARAM_PORTDEFINITIONTYPE port_def;
 
@@ -362,7 +369,7 @@ rpi_close(struct audio_output *ao)
 static unsigned
 rpi_delay(struct audio_output *ao)
 {
-	struct rpi_data *od = (struct rpi_data *)ao;
+	RpiOutput *od = (RpiOutput *)ao;
 
 	return od->num_buffers_avail < 1 ? 50 : 0;
 }
@@ -371,7 +378,7 @@ static size_t
 rpi_play(struct audio_output *ao, const void *chunk, size_t size,
 	    G_GNUC_UNUSED Error &error)
 {
-	struct rpi_data *od = (struct rpi_data *)ao;
+	RpiOutput *od = (RpiOutput *)ao;
 	OMX_ERRORTYPE omx_err;
 	OMX_BUFFERHEADERTYPE *omx_buffer = NULL;
 
@@ -382,7 +389,7 @@ rpi_play(struct audio_output *ao, const void *chunk, size_t size,
 		omx_buffer =
 			(OMX_BUFFERHEADERTYPE*)(g_list_last(od->input_buffers_avail)->data);
 		if (omx_buffer == NULL) {
-			g_warning("can't get a buffer wtf\n");
+			g_warning("can't get a buffer\n");
 			continue;
 		}
 		omx_buffer->nOffset = 0;
@@ -416,7 +423,7 @@ rpi_cancel(G_GNUC_UNUSED struct audio_output *ao)
 {
 	// FIXME: logically we should flush on cancel but flushing here leads to
 	// carcking sound between tracks on rpi.
-	//struct rpi_data *od = (struct rpi_data *)ao;
+	//RpiOutput *od = (RpiOutput *)ao;
 	//m_send_cmd(od->m_render, OMX_CommandFlush, od->m_input_port);
 }
 
